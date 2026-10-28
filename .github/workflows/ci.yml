@@ -1,0 +1,92 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: ruff format --check .
+      - run: python -m compileall -q src
+      - run: mypy
+      - run: pytest -q
+
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e .
+      - run: eurus --version
+      - run: eurus --help
+      - run: eurus doctor
+      - run: eurus-tui --help
+      - run: python -c "import eurus; from eurus.agent.factory import build_agent; from eurus.runtime.engine import AgentEngine; print(eurus.__version__)"
+      - run: python -c "from eurus.tools.builtin import default_registry; r = default_registry(include_capability_tools=True); assert 'shell' not in r.names(); print('core import without optional extras ok')"
+
+  packaging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip build twine
+      - run: python -m build
+      - run: python -m twine check dist/*
+      - run: python -m pip install --force-reinstall dist/*.whl
+      - run: eurus --version
+      - run: python -c "import eurus.browser, eurus.browser.tools; print('optional browser module imports without playwright installed')"
+
+  docs-links:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python scripts/check_docs_links.py
+
+  deterministic-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e ".[dev]"
+      - run: pytest -q tests/test_phase8_approval_security.py tests/test_sandbox.py tests/test_host_sandbox.py tests/test_net_guard.py tests/test_browser_tools.py tests/test_coder_delegation.py tests/test_memory_trust.py tests/test_verification_wiring.py tests/test_failure_classification.py tests/test_trace.py tests/test_persistence_recovery_v4.py tests/test_runtime_persistence.py

@@ -1,0 +1,20 @@
+{
+  "stream_frame": {
+    "rounds": 1000.0,
+    "median_ms": 0.000181,
+    "p95_ms": 0.000261,
+    "max_ms": 0.029966
+  },
+  "stream_tail": {
+    "rounds": 1000.0,
+    "median_ms": 0.068298,
+    "p95_ms": 0.116176,
+    "max_ms": 0.392954
+  },
+  "status_render": {
+    "rounds": 1000.0,
+    "median_ms": 0.0338465,
+    "p95_ms": 0.067442,
+    "max_ms": 0.488568
+  }
+}
