@@ -22,4 +22,10 @@ Use `eurus.security.journal.AuditJournal` for newline-delimited JSON audit recor
 
 ## Local sessions and memory
 
-Chat history and explicit memory notes are stored in `$EURUS_HOME/sessions.sqlite3` when session persistence or memory commands are used. The database is created with owner-only permissions where supported. Do not put credentials, access tokens, or other secrets into persistent chat history or memory notes. Memory search is explicit; notes are not automatically added to model prompts.
+Chat history and explicit memory notes are stored in `$EURUS_HOME/sessions.sqlite3` when session persistence or memory commands are used. The database is created with owner-only permissions where supported. Do not put credentials, access tokens, or other secrets into persistent chat history or memory notes.
+
+Relevant saved memories are injected into model prompts under a bounded character budget, labeled as memories and kept separate from lessons. Memory writes are screened against secret patterns and sensitive personal-information indicators, and quarantined (untrusted) memories are excluded from prompts. The application should treat memory contents as untrusted context, not executable instructions.
+
+## Shell execution on Termux
+
+On Android Termux, Eurus defaults to the non-isolated host sandbox backend with `sandbox.required = false`: there is no container isolation, and the approval gate is the only control before a command runs. Review every approval carefully in this mode.

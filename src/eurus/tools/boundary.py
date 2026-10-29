@@ -26,6 +26,7 @@ Approver = Callable[[ToolCall, Tool], Awaitable[bool]]
 OutcomeRecorder = Callable[[ToolExecutionOutcome], Awaitable[None] | None]
 BoundaryEventRecorder = Callable[[str, dict[str, Any]], Awaitable[None] | None]
 UncertainKeyProvider = Callable[[str], list[str]]
+BeforeMutationHook = Callable[[ToolCall, Tool], Awaitable[None] | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +89,7 @@ class ToolExecutionBoundary:
         budget_check: Callable[[int], bool] | None = None,
         uncertain_keys_provider: UncertainKeyProvider | None = None,
         attempt_started_recorder: AttemptStartedRecorder | None = None,
+        before_mutation: BeforeMutationHook | None = None,
     ) -> None:
         self.registry = registry
         self.context = context
@@ -97,6 +99,7 @@ class ToolExecutionBoundary:
         self.budget_check = budget_check
         self.uncertain_keys_provider = uncertain_keys_provider
         self.attempt_started_recorder = attempt_started_recorder
+        self.before_mutation = before_mutation
         self._path_locks: dict[str, asyncio.Lock] = {}
         self._global_mutation_lock = asyncio.Lock()
         self._inflight: dict[str, asyncio.Lock] = {}
@@ -137,6 +140,17 @@ class ToolExecutionBoundary:
                 await recorded
         except Exception:
             log.warning("boundary write-ahead recording failed", exc_info=True)
+
+    async def _run_before_mutation(self, call: ToolCall, tool: Tool) -> None:
+        """Capture pre-images (checkpoints) before an approved mutation starts."""
+        if self.before_mutation is None or not tool.mutates:
+            return
+        try:
+            recorded = self.before_mutation(call, tool)
+            if inspect.isawaitable(recorded):
+                await recorded
+        except Exception:
+            log.warning("before-mutation checkpoint failed", exc_info=True)
 
     def _durable_uncertain_keys(self, run_id: str | None) -> set[str]:
         if run_id is None or self.uncertain_keys_provider is None:
@@ -179,6 +193,22 @@ class ToolExecutionBoundary:
         if not values:
             return ["__eurus_mutation__"]
         return sorted(set(values))
+
+    def _finished_event(
+        self,
+        call: ToolCall,
+        tool: Tool,
+        attempt: str,
+        run_id: str | None,
+        status: ToolExecutionStatus,
+    ) -> dict[str, Any]:
+        return {
+            "tool": tool.name,
+            "call_id": call.id,
+            "attempt_id": attempt,
+            "run_id": run_id,
+            "status": status.value,
+        }
 
     def _denied(
         self,
@@ -387,6 +417,7 @@ class ToolExecutionBoundary:
                             risk_level=risk.risk_level,
                         )
                     )
+                    await self._run_before_mutation(call, tool)
                 await self._emit(
                     "tool.started",
                     {
@@ -423,6 +454,10 @@ class ToolExecutionBoundary:
                         finished_at=datetime.now(UTC),
                         detail=detail,
                     )
+                    await self._emit(
+                        "tool.finished",
+                        self._finished_event(call, tool, attempt, run_id, outcome.status),
+                    )
                     await self._record(outcome)
                     raise
                 except TimeoutError:
@@ -449,6 +484,10 @@ class ToolExecutionBoundary:
                         finished_at=datetime.now(UTC),
                         detail=detail,
                     )
+                    await self._emit(
+                        "tool.finished",
+                        self._finished_event(call, tool, attempt, run_id, outcome.status),
+                    )
                     return outcome
                 except ToolError as exc:
                     outcome = ToolExecutionOutcome(
@@ -465,6 +504,10 @@ class ToolExecutionBoundary:
                         finished_at=datetime.now(UTC),
                         detail=redact_text(str(exc))[:500],
                     )
+                    await self._emit(
+                        "tool.finished",
+                        self._finished_event(call, tool, attempt, run_id, outcome.status),
+                    )
                     return outcome
                 except Exception as exc:
                     outcome = ToolExecutionOutcome(
@@ -480,6 +523,10 @@ class ToolExecutionBoundary:
                         started_at=started,
                         finished_at=datetime.now(UTC),
                         detail=redact_text(f"{type(exc).__name__}: {exc}")[:500],
+                    )
+                    await self._emit(
+                        "tool.finished",
+                        self._finished_event(call, tool, attempt, run_id, outcome.status),
                     )
                     return outcome
                 if isinstance(output, ToolOutput):

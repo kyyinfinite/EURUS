@@ -167,3 +167,22 @@ def test_backend_rejects_mapped_private_resolution() -> None:
     backend._inner = _RefusingInner()  # type: ignore[assignment]
     with pytest.raises(NetworkPolicyError):
         asyncio.run(backend.connect_tcp("evil.example", 80, timeout=1.0))
+
+
+def test_httpcore_backend_seam_version_guard() -> None:
+    """Version guard: fails with upgrade instructions when httpcore moves the seam.
+
+    DNS-rebinding pinning needs connect-time IP selection with original-host
+    SNI, which httpx/httpcore only offer through the private network-backend
+    protocol. The single adapter is eurus.security.http_adapter; if this test
+    fails, re-implement ValidatingBackend there against the new internals.
+    """
+    from eurus.security import http_adapter
+
+    assert http_adapter.HTTPCORE_BACKEND_AVAILABLE, (
+        f"httpcore no longer exposes {http_adapter.HTTPCORE_BACKEND_SEAM}; "
+        "re-implement eurus.security.http_adapter.ValidatingBackend against the "
+        f"current httpcore internals. Import error: {http_adapter.SEAM_IMPORT_ERROR}"
+    )
+    backend = http_adapter.ValidatingBackend()
+    assert backend._inner is not None

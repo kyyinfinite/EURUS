@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from eurus.models import ToolCall
+from eurus.security.redaction import redact_text, summarize_arguments
 from eurus.tools.base import Tool
 
 
@@ -36,7 +37,7 @@ def action_fingerprint(call: ToolCall) -> str:
 
 
 def approval_request(call: ToolCall, tool: Tool) -> ApprovalRequest:
-    summary = json.dumps(call.arguments, sort_keys=True, ensure_ascii=False, default=str)
+    summary = redact_text(summarize_arguments(call.arguments))
     return ApprovalRequest(
         request_id=call.id,
         tool_name=tool.name,

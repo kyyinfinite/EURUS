@@ -17,6 +17,7 @@ from eurus.agent.events import AgentEvent
 from eurus.agent.factory import build_agent
 from eurus.agent.loop import Agent
 from eurus.catalog import resolve_api_key
+from eurus.coding.checkpoint import CheckpointStore
 from eurus.config import Config
 from eurus.errors import EurusError
 from eurus.mcp.manager import MCPToolManager
@@ -29,9 +30,8 @@ from eurus.runtime.application import AgentRuntime
 from eurus.security.approval import SessionScopedApprover, approval_request
 from eurus.sessions import SessionStore
 from eurus.skills import list_skills
-from eurus.termux import is_termux
 from eurus.tools import Tool, ToolRegistry, default_registry
-from eurus.tui import fonts, themes
+from eurus.tui import appearance, themes
 from eurus.tui import prefs as view_prefs
 from eurus.tui.commands import COMMANDS, resolve, suggest
 from eurus.tui.info import config_rows, credential_note, describe, shell_label
@@ -45,9 +45,9 @@ from eurus.tui.picker import (
     with_active_first,
 )
 from eurus.tui.prefs import ViewPrefs
-from eurus.tui.renderer import ALLOW_ANSWERS, StreamView, TerminalRenderer, capabilities_of
+from eurus.tui.renderer import ALLOW_ANSWERS, StreamView, TerminalRenderer
 from eurus.tui.state import AgentState
-from eurus.tui.theme import GLYPH_SETS, Theme
+from eurus.tui.theme import Theme
 
 if TYPE_CHECKING:
     from eurus.tui.prompt import PromptBox
@@ -134,6 +134,7 @@ class InteractiveSession:
             "/workspace": self._workspace,
             "/settings": self._settings,
             "/compact": self._compact,
+            "/undo": self._undo,
             "/retry": self._retry,
             "/clear": self._clear,
             "/exit": self._exit,
@@ -340,151 +341,49 @@ class InteractiveSession:
                 page = 0
 
     def _unicode(self) -> bool:
-        return capabilities_of(self.renderer.console).unicode
+        return appearance.unicode_capabilities(self)
 
     def _paint(self, theme: Theme) -> None:
-        self.renderer.apply_theme(theme)
-        if self.picker is not None:
-            self.picker.apply_theme(theme)
-        if self.recolor is not None:
-            self.recolor.apply(theme)
+        appearance.paint(self, theme)
 
-    def _theme(self, argument: str) -> None:
-        head, _, rest = argument.strip().partition(" ")
-        word, rest = head.lower(), rest.strip()
-        if not word or word == "list":
-            current = themes.active_name().lower()
-            rows = [
-                ("*" if item == current else " ", f"{item}  {themes.describe_theme(item)}")
-                for item in themes.available()
-            ]
-            self.renderer.table("Themes", rows)
-        elif word == "preview":
-            self._theme_preview(rest)
-        elif word == "new":
-            self._theme_new(rest)
-        elif word == "path":
-            self.renderer.system(str(themes.user_dir()))
-        elif word == "termux":
-            self._theme_termux(rest)
-        else:
-            self._theme_switch(themes.DEFAULT if word == "reset" else word)
+    def paint_theme(self, theme: Theme) -> None:
+        self._paint(theme)
+
+    def preview_theme(self, name: str) -> None:
+        appearance.preview_theme(self, name)
+
+    async def _theme(self, argument: str) -> None:
+        await appearance.theme_command(self, argument)
 
     def _resolve_theme(self, name: str) -> Theme | None:
-        try:
-            return themes.resolve(name, self._unicode(), glyph_set=themes.glyph_choice())
-        except ValueError as exc:
-            self.renderer.error(str(exc), "Available: " + ", ".join(themes.available()))
-            return None
-
-    def _theme_switch(self, name: str) -> None:
-        theme = self._resolve_theme(name)
-        if theme is None:
-            return
-        self._paint(theme)
-        themes.save_active(name)
-        self.renderer.system(f"Theme: {name}")
-        wanted = themes.font_for(name)
-        target = fonts.detect_target()
-        installed = target.kind == "termux" and target.path is not None and target.path.is_file()
-        if wanted in fonts.CATALOG and not installed:
-            self.renderer.system(f"This theme suggests the {wanted} font: /font install {wanted}")
-
-    def _theme_preview(self, name: str) -> None:
-        key = name.lower() or themes.active_name().lower()
-        theme = self._resolve_theme(key)
-        if theme is not None:
-            self.renderer.theme_preview(key, theme)
-
-    def _theme_new(self, argument: str) -> None:
-        parts = argument.split()
-        if not parts:
-            self.renderer.error("Usage: /theme new <name> [base]", "Example: /theme new ocean nord")
-            return
-        try:
-            path = themes.scaffold(parts[0], parts[1] if len(parts) > 1 else themes.DEFAULT)
-        except ValueError as exc:
-            self.renderer.error(str(exc))
-            return
-        self.renderer.system(f"Created {path}")
-        self.renderer.system(f"Edit it, then switch with /theme {parts[0].lower()}")
-
-    def _theme_termux(self, name: str) -> None:
-        if not is_termux():
-            self.renderer.warning("/theme termux only works inside Termux.")
-            return
-        key = name.lower() or themes.active_name().lower()
-        theme = self._resolve_theme(key)
-        if theme is None:
-            return
-        path = fonts.user_home() / ".termux" / "colors.properties"
-        try:
-            themes.write_termux_colors(theme, path)
-        except OSError as exc:
-            self.renderer.error(f"Cannot write {path}", str(exc))
-            return
-        reloaded = fonts.run_command(["termux-reload-settings"])
-        note = "Termux reloaded." if reloaded else "Run termux-reload-settings to apply."
-        self.renderer.system(f"Saved Termux colors for {key}. {note}")
+        return appearance.resolve_theme(self, name)
 
     def _glyphs(self, argument: str) -> None:
-        choice = argument.strip().lower()
-        if not choice:
-            current = themes.glyph_choice() or "auto"
-            rows = [
-                (
-                    "*" if name == current else " ",
-                    f"{name}  {g.prompt} {g.dot} {g.arrow} {g.ok} {g.fail} {g.spark}",
-                )
-                for name, g in GLYPH_SETS.items()
-            ]
-            rows.append(("*" if current == "auto" else " ", "auto  follow the theme and terminal"))
-            self.renderer.table("Glyphs", rows)
-            return
-        if choice != "auto" and choice not in GLYPH_SETS:
-            self.renderer.error(f"Unknown glyph set: {choice}", "Use: unicode, ascii, nerd, auto")
-            return
-        themes.save_glyphs("" if choice == "auto" else choice)
-        theme = self._resolve_theme(themes.active_name().lower())
-        if theme is not None:
-            self._paint(theme)
-            self.renderer.system(f"Glyphs: {choice}")
+        appearance.glyphs_command(self, argument)
 
     async def _font(self, argument: str) -> None:
-        action, _, rest = argument.strip().partition(" ")
-        action, rest = action.lower() or "list", rest.strip()
-        target = fonts.detect_target()
-        try:
-            if action == "list":
-                rows = [
-                    (spec.key, f"{spec.family} - {spec.note}") for spec in fonts.CATALOG.values()
-                ]
-                rows.append(("status", fonts.status(target)))
-                self.renderer.table("Fonts", rows)
-            elif action == "status":
-                self.renderer.system(f"{target.kind}: {fonts.status(target)}")
-            elif action == "reset":
-                self.renderer.system(await asyncio.to_thread(fonts.reset, target))
-            elif action == "install":
-                await self._font_install(rest)
-            else:
-                self.renderer.error(
-                    f"Unknown font action: {action}", "Use: list, install, status, reset"
-                )
-        except fonts.FontError as exc:
-            self.renderer.error(str(exc))
+        await appearance.font_command(self, argument)
+
+    def _undo(self, argument: str) -> None:
+        appearance.undo_command(self, argument)
+
+    async def _theme_menu(self) -> None:
+        await appearance.theme_menu(self)
+
+    def _theme_switch(self, name: str) -> None:
+        appearance.theme_switch(self, name)
+
+    def _theme_preview(self, name: str) -> None:
+        appearance.theme_preview(self, name)
+
+    def _theme_new(self, argument: str) -> None:
+        appearance.theme_new(self, argument)
+
+    def _theme_termux(self, name: str) -> None:
+        appearance.theme_termux(self, name)
 
     async def _font_install(self, source: str) -> None:
-        if not source:
-            self.renderer.error("Usage: /font install <name|path>", "See /font list")
-            return
-        spec = fonts.CATALOG.get(source.lower())
-        if spec is not None:
-            self.renderer.system(f"Downloading {spec.family} from GitHub...")
-        result = await asyncio.to_thread(fonts.install_source, source)
-        self.renderer.system(result.message)
-        if themes.glyph_choice() != "nerd":
-            self.renderer.system("Use /glyphs nerd to turn on icon glyphs.")
+        await appearance.font_install(self, source)
 
     def _models(self, _: str) -> None:
         models = list(
@@ -896,11 +795,13 @@ class InteractiveSession:
             run_store=RunStore(database),
             event_store=EventStore(database),
             attempt_store=ToolAttemptStore(database),
+            checkpoint_store=CheckpointStore(),
             pricing=build_pricing_catalog(
                 {
                     "updated_at": self.config.pricing.updated_at,
                     "models": self.config.pricing.models,
-                }
+                },
+                home=paths.home_dir(),
             ),
         )
 

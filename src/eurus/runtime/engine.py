@@ -10,10 +10,12 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from functools import partial
+from pathlib import Path
 from typing import Any
 
 from eurus.agent.events import AgentEvent
 from eurus.agent.loop import Agent
+from eurus.coding.checkpoint import CheckpointStore
 from eurus.runtime.budgets import BudgetSpec, BudgetTracker
 from eurus.runtime.cancellation import CancellationToken
 from eurus.runtime.contracts import LoopDecision, VerificationOutcome, VerificationStatus
@@ -113,6 +115,7 @@ class AgentEngine:
         pricing: PricingCatalog | None = None,
         max_agent_events: int = DEFAULT_MAX_AGENT_EVENTS,
         max_runtime_events: int = DEFAULT_MAX_RUNTIME_EVENTS,
+        checkpoint_store: CheckpointStore | None = None,
     ) -> None:
         self.agent = agent
         self.verifier = verifier
@@ -133,6 +136,7 @@ class AgentEngine:
         self.max_agent_events = max_agent_events
         self.max_runtime_events = max_runtime_events
         self.pricing = pricing
+        self.checkpoint_store = checkpoint_store
         self._sequences: dict[str, int] = {}
 
     def _event(
@@ -412,6 +416,7 @@ class AgentEngine:
         finally:
             await self._stop_watchers(cancellation_watcher, control_watcher)
             self._detach_run_state_provider()
+            self._finalize_checkpoint(runtime_run.run_id)
         if runtime_run.status in {RunStatus.RUNNING, RunStatus.VERIFYING}:
             transition_run(
                 runtime_run, RunStatus.FAILED, stop_reason="agent_ended_without_terminal_event"
@@ -557,7 +562,7 @@ class AgentEngine:
             and flow.governor.should_winddown(
                 tokens_used=flow.tracker.tokens_used,
                 max_tokens=flow.spec.max_tokens,
-                cost_used=flow.tracker.cost_used,
+                cost_used=flow.tracker.cost_used if flow.tracker.cost_known else None,
                 max_cost=flow.spec.max_cost if flow.tracker.cost_known else None,
             )
             and hasattr(self.agent, "request_wrap_up")
@@ -894,6 +899,36 @@ class AgentEngine:
                 ]
 
             boundary.uncertain_keys_provider = durable_uncertain_keys
+        if self.checkpoint_store is not None and hasattr(boundary, "before_mutation"):
+            checkpoint_store = self.checkpoint_store
+
+            async def capture_preimage(call: object, tool: object) -> None:
+                from eurus.coding.checkpoint import mutation_targets
+                from eurus.models import ToolCall as MutatingCall
+                from eurus.tools.base import Tool as MutatingTool
+
+                if not isinstance(call, MutatingCall) or not isinstance(tool, MutatingTool):
+                    return
+                workspace = getattr(getattr(self.agent, "context", None), "workspace", None)
+                if workspace is None:
+                    return
+                targets = mutation_targets(call, tool, Path(workspace))
+                if not targets:
+                    return
+                await asyncio.to_thread(checkpoint_store.record, run_id, Path(workspace), targets)
+
+            boundary.before_mutation = capture_preimage
+
+    def _finalize_checkpoint(self, run_id: str) -> None:
+        if self.checkpoint_store is None:
+            return
+        workspace = getattr(getattr(self.agent, "context", None), "workspace", None)
+        if workspace is None:
+            return
+        try:
+            self.checkpoint_store.finalize(run_id, Path(workspace))
+        except Exception:
+            log.warning("checkpoint finalization failed for run %s", run_id, exc_info=True)
 
     async def _watch_cancellation(self, cancellation: CancellationToken) -> None:
         await cancellation.wait()

@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import shutil
-from collections.abc import Iterator
 from io import StringIO
 from pathlib import Path
-from typing import IO, TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from prompt_toolkit import Application
 from prompt_toolkit.application import get_app
@@ -33,10 +31,8 @@ from prompt_toolkit.styles import DynamicStyle
 from rich.console import Console
 
 from eurus import __version__
-from eurus.config import Config
 from eurus.tui import themes
 from eurus.tui.brand import welcome as welcome_art
-from eurus.tui.capabilities import detect
 from eurus.tui.commands import COMMANDS
 from eurus.tui.layout import cell_clip, clip
 from eurus.tui.palette import ListOverlay, PaletteItem
@@ -50,17 +46,24 @@ from eurus.tui.prompt import (
     fragments,
 )
 from eurus.tui.renderer import (
-    COLOR_SYSTEMS,
     SAMPLE_PROMPTS,
-    ColorSystem,
-    StreamView,
-    TerminalRenderer,
 )
 from eurus.tui.theme import Theme
 from eurus.tui.transcript import TranscriptSink
 
 if TYPE_CHECKING:
     from eurus.tui.session import InteractiveSession
+
+from eurus.tui.fullscreen_renderer import FullscreenRenderer, attach, pane_width
+
+__all__ = [
+    "FullscreenRenderer",
+    "FullscreenUI",
+    "INTERRUPT",
+    "attach",
+    "pane_width",
+    "run_fullscreen",
+]
 
 COMPOSER_WIDTH = 86
 PALETTE_WIDTH = 54
@@ -71,64 +74,6 @@ OVERLAY_MODES = frozenset({"palette", "settings", "theme", "glyphs", "options", 
 OPTIONS_HINT = "enter select  ·  type filter, n/p pages, b back, q quit"
 PRIMARY_COMMANDS = frozenset({"/help", "/clear", "/model", "/workspace", "/settings"})
 ATTACH_LIMIT = 60
-
-
-def pane_width(columns: int) -> int:
-    return max(columns, 20)
-
-
-class FullscreenRenderer(TerminalRenderer):
-    def __init__(
-        self, console: Console, theme: Theme, sink: TranscriptSink, system: ColorSystem | None
-    ) -> None:
-        super().__init__(console, theme)
-        self.sink = sink
-        self.color_system = system
-        self.stream_view: StreamView | None = None
-        self.rich_pages = False
-
-    def clear(self) -> None:
-        self.sink.clear()
-
-    def startup(self, config: Config) -> None:
-        return None
-
-    @contextlib.contextmanager
-    def generating(self) -> Iterator[StreamView]:
-        view = StreamView(self.theme, preview=self.stream_preview)
-        self.stream_view = view
-        try:
-            yield view
-        finally:
-            self.stream_view = None
-
-    def pause_live(self) -> None:
-        if self.stream_view is not None:
-            self.stream_view.paused = True
-
-    def resume_live(self) -> None:
-        if self.stream_view is not None:
-            self.stream_view.paused = False
-
-
-def attach(session: InteractiveSession) -> tuple[FullscreenRenderer, TranscriptSink]:
-    size = shutil.get_terminal_size((80, 24))
-    sink = TranscriptSink()
-    system = COLOR_SYSTEMS[detect().color]
-    console = Console(
-        file=cast(IO[str], sink),
-        force_terminal=True,
-        color_system=system,
-        no_color=system is None,
-        width=pane_width(size.columns),
-        height=size.lines,
-        highlight=False,
-    )
-    renderer = FullscreenRenderer(console, session.renderer.theme, sink, system)
-    renderer.markdown_enabled = session.renderer.markdown_enabled
-    renderer.stream_preview = session.renderer.stream_preview
-    session.renderer = renderer
-    return renderer, sink
 
 
 class FullscreenUI(PromptBox):
@@ -151,6 +96,7 @@ class FullscreenUI(PromptBox):
         self.future: asyncio.Future[Any] | None = None
         self.overlay: ListOverlay | None = None
         self.overlay_allow_raw = False
+        self._theme_backup: Theme | None = None
         self._welcome_cache: dict[tuple[int, int, int, bool], list[str]] = {}
         super().__init__(renderer.theme, self._status, self._hint, COMMANDS)
         self.buffer = Buffer(
@@ -545,6 +491,7 @@ class FullscreenUI(PromptBox):
         self._open("settings", self._settings_items())
 
     def open_theme(self) -> None:
+        self._theme_backup = self.session.renderer.theme
         self._open("theme", self._theme_items())
 
     def open_glyphs(self) -> None:
@@ -617,6 +564,7 @@ class FullscreenUI(PromptBox):
             self._refresh_overlay()
             return
         if action == "theme-name":
+            self._theme_backup = None
             self._close_overlay()
             self.dispatch(f"/theme {item.label}")
             return
@@ -631,6 +579,11 @@ class FullscreenUI(PromptBox):
         self._close_overlay()
 
     def _overlay_escape(self) -> None:
+        if self.mode == "theme":
+            backup = self._theme_backup
+            self._theme_backup = None
+            if backup is not None:
+                self.session.paint_theme(backup)
         if self.mode == "options":
             self._settle(None)
             return
@@ -640,6 +593,17 @@ class FullscreenUI(PromptBox):
         overlay = self.overlay
         if overlay is not None:
             overlay.move(delta)
+
+    def _overlay_theme_move(self, delta: int) -> None:
+        """Move the theme cursor and live-preview the highlighted theme."""
+        overlay = self.overlay
+        if overlay is None:
+            return
+        overlay.move(delta)
+        item = overlay.selected()
+        if item is not None and item.action == "theme-name":
+            self.session.preview_theme(item.label)
+            self.app.invalidate()
 
     def _composer_width(self) -> int:
         return max(min(COMPOSER_WIDTH, self._size()[0] - 4), 20)
@@ -972,12 +936,18 @@ class FullscreenUI(PromptBox):
         @keys.add("up", filter=overlay, eager=True)
         def overlay_up(event: KeyPressEvent) -> None:
             if self.overlay is not None:
-                self.overlay.move(-1)
+                if self.mode == "theme":
+                    self._overlay_theme_move(-1)
+                else:
+                    self.overlay.move(-1)
 
         @keys.add("down", filter=overlay, eager=True)
         def overlay_down(event: KeyPressEvent) -> None:
             if self.overlay is not None:
-                self.overlay.move(1)
+                if self.mode == "theme":
+                    self._overlay_theme_move(1)
+                else:
+                    self.overlay.move(1)
 
         @keys.add("pageup", filter=overlay, eager=True)
         def overlay_page_up(event: KeyPressEvent) -> None:

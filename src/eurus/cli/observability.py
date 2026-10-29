@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from typing import Any
 
 import click
@@ -12,6 +13,7 @@ from eurus import paths
 from eurus.agent.factory import build_agent
 from eurus.cli.base import _state, main
 from eurus.cli.common import _approve, _build_engine
+from eurus.coding.checkpoint import CheckpointStore
 from eurus.errors import EurusError
 from eurus.providers.factory import build_router
 from eurus.runtime.budgets import BudgetSpec
@@ -271,3 +273,32 @@ def resume_run(ctx: click.Context, run_id: str, max_iterations: int) -> None:
         f"stop_reason={result.run.stop_reason} "
         f"verification={result.verification_status.value}"
     )
+
+
+@main.command("undo")
+@click.argument("run_id")
+@click.option(
+    "--workspace",
+    default=".",
+    show_default=True,
+    help="Workspace the run mutated; undo refuses files changed after the run.",
+)
+def undo_run(run_id: str, workspace: str) -> None:
+    """Restore the files a finished run changed, using its pre-mutation checkpoint."""
+    root = Path(workspace).expanduser().resolve()
+    store = CheckpointStore()
+    checkpoint = store.load(run_id)
+    if checkpoint is None:
+        raise click.ClickException(f"no checkpoint found for run: {run_id}")
+    if checkpoint.workspace != str(root):
+        raise click.ClickException(
+            f"checkpoint belongs to workspace {checkpoint.workspace}; "
+            f"rerun with --workspace {checkpoint.workspace}"
+        )
+    restored, refused = store.undo(run_id, root)
+    for item in restored:
+        click.echo(f"restored {item}")
+    for item in refused:
+        click.echo(f"refused {item}")
+    if not restored and not refused:
+        click.echo("checkpoint has no restorable files")

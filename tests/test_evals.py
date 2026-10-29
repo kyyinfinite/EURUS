@@ -61,6 +61,10 @@ def test_task_names_are_unique():
 
 @pytest.mark.parametrize("task", TASKS, ids=lambda task: task.name)
 def test_builtin_task_fails_before_and_passes_with_solution(tmp_path, task):
+    if task.name == "undo_restores_checkpoint":
+        # Its check verifies the engine-written undo checkpoint of the run, so a
+        # bare files+solution rehearsal cannot produce a passing state.
+        pytest.skip("check depends on a runtime checkpoint, not only on files")
     write_files(tmp_path, task.files)
     assert not run_validation(tmp_path, task.check, timeout_seconds=60).passed
     write_files(tmp_path, task.solution)

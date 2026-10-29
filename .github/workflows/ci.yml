@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -50,7 +50,8 @@ jobs:
       - run: eurus doctor
       - run: eurus-tui --help
       - run: python -c "import eurus; from eurus.agent.factory import build_agent; from eurus.runtime.engine import AgentEngine; print(eurus.__version__)"
-      - run: python -c "from eurus.tools.builtin import default_registry; r = default_registry(include_capability_tools=True); assert 'shell' not in r.names(); print('core import without optional extras ok')"
+      - run: python -c "from eurus.tools.builtin import default_registry; r = default_registry(include_capability_tools=True); assert 'shell' not in r.names(); assert {'web_search', 'web_fetch', 'deep_search'}.issubset(set(r.names())); print('core import without optional extras ok')"
+      - run: python -c "import importlib.util; assert importlib.util.find_spec('ddgs') is None, 'ddgs must not be a core dependency'; assert importlib.util.find_spec('trafilatura') is None, 'trafilatura must not be a core dependency'; print('web extra is optional in the core install')"
 
   packaging:
     runs-on: ubuntu-latest
@@ -89,4 +90,4 @@ jobs:
           cache: pip
       - run: python -m pip install --upgrade pip
       - run: pip install -e ".[dev]"
-      - run: pytest -q tests/test_phase8_approval_security.py tests/test_sandbox.py tests/test_host_sandbox.py tests/test_net_guard.py tests/test_browser_tools.py tests/test_coder_delegation.py tests/test_memory_trust.py tests/test_verification_wiring.py tests/test_failure_classification.py tests/test_trace.py tests/test_persistence_recovery_v4.py tests/test_runtime_persistence.py
+      - run: pytest -q tests/test_approval_security.py tests/test_sandbox.py tests/test_host_sandbox.py tests/test_net_guard.py tests/test_browser_tools.py tests/test_coder_delegation.py tests/test_memory_trust.py tests/test_verification_wiring.py tests/test_failure_classification.py tests/test_trace.py tests/test_persistence_recovery_v4.py tests/test_runtime_persistence.py tests/test_file_tools.py tests/test_security_hardening.py tests/test_tui_config.py

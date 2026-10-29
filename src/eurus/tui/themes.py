@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from eurus import paths
+from eurus.tui import tui_config
 from eurus.tui.theme import (
     ASCII_GLYPHS,
     GLYPH_KEYS,
@@ -26,8 +27,6 @@ HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 NAME = re.compile(r"^[a-z0-9_-]{1,40}$")
 CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 DEFAULT = "eurus"
-STATE_FILE = "theme"
-GLYPH_FILE = "glyphs"
 RESERVED = frozenset({"preview", "new", "path", "termux", "reset", "list"})
 MAX_DEPTH = 8
 MAX_GLYPH = 12
@@ -157,6 +156,21 @@ BUILTIN_CODE: dict[str, str] = {
     "gruvbox": "gruvbox-dark",
     "tokyo-night": "one-dark",
     "catppuccin": "material",
+}
+
+# Default font key suggested by each built-in theme. Keys refer to the /font
+# catalog (see eurus.tui.fonts). The suggestion is never downloaded or applied
+# automatically; users install it with /font install <key>.
+THEME_FONTS: dict[str, str] = {
+    "eurus": "jetbrains-mono-nerd",
+    "midnight": "jetbrains-mono-nerd",
+    "paper": "fira-code-nerd",
+    "mono": "hack-nerd",
+    "nord": "jetbrains-mono-nerd",
+    "dracula": "fira-code-nerd",
+    "gruvbox": "hack-nerd",
+    "tokyo-night": "cascadia-code-nerd",
+    "catppuccin": "fira-code-nerd",
 }
 
 DESCRIPTIONS: dict[str, str] = {
@@ -327,21 +341,36 @@ def font_for(name: str, home: Path | None = None) -> str:
         return ""
 
 
+def bound_font(name: str, home: Path | None = None) -> str:
+    """Font key a theme suggests: built-ins from THEME_FONTS, user TOMLs from [font] name."""
+    key = name.strip().lower() or DEFAULT
+    if key in THEME_FONTS:
+        return THEME_FONTS[key]
+    return font_for(key, home)
+
+
+def saved_font(home: Path | None = None) -> str:
+    """Explicit user font override persisted in tui.toml ([tui] font)."""
+    return tui_config.load_choices(home or paths.home_dir()).font
+
+
+def save_font(key: str, home: Path | None = None) -> None:
+    tui_config.update_key(home or paths.home_dir(), "font", key.strip().lower())
+
+
 def active_name(environ: Mapping[str, str] | None = None, home: Path | None = None) -> str:
     env = os.environ if environ is None else environ
     chosen = env.get("EURUS_THEME", "").strip()
     if chosen:
         return chosen
     base = home or paths.home_dir(environ)
-    try:
-        stored = (base / STATE_FILE).read_text(encoding="utf-8").strip()
-    except OSError:
-        stored = ""
+    stored = tui_config.load_choices(base).theme
     return stored or DEFAULT
 
 
 def save_active(name: str, home: Path | None = None) -> None:
-    _write_state(STATE_FILE, name, home)
+    base = home or paths.home_dir()
+    tui_config.update_key(base, "theme", name.strip().lower() or DEFAULT)
 
 
 def glyph_choice(environ: Mapping[str, str] | None = None, home: Path | None = None) -> str:
@@ -350,31 +379,13 @@ def glyph_choice(environ: Mapping[str, str] | None = None, home: Path | None = N
     if chosen in GLYPH_SETS:
         return chosen
     base = home or paths.home_dir(environ)
-    try:
-        stored = (base / GLYPH_FILE).read_text(encoding="utf-8").strip().lower()
-    except OSError:
-        return ""
+    stored = tui_config.load_choices(base).glyphs
     return stored if stored in GLYPH_SETS else ""
 
 
 def save_glyphs(choice: str, home: Path | None = None) -> None:
     base = home or paths.home_dir()
-    if choice in GLYPH_SETS:
-        _write_state(GLYPH_FILE, choice, base)
-        return
-    try:
-        (base / GLYPH_FILE).unlink(missing_ok=True)
-    except OSError:
-        return
-
-
-def _write_state(filename: str, value: str, home: Path | None) -> None:
-    base = home or paths.home_dir()
-    try:
-        base.mkdir(parents=True, exist_ok=True)
-        (base / filename).write_text(value + "\n", encoding="utf-8")
-    except OSError:
-        return
+    tui_config.update_key(base, "glyphs", choice if choice in GLYPH_SETS else "")
 
 
 def load_active(

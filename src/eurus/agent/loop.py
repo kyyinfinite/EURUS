@@ -9,9 +9,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
+from eurus.agent.budget import PROGRESS_WINDOW, IterationBudget, ProgressTracker
 from eurus.agent.context import ContextEngine, ContextWindow, ExtractiveContextEngine
 from eurus.agent.evaluation import FailureKind, classify_failure, recovery_note
 from eurus.agent.events import AgentEvent
+from eurus.agent.history import CANCELLED_RESULT, repair_history
 from eurus.agent.planner import PlanStrategy, TaskPlan, assess_objective
 from eurus.agent.task_state import TaskState
 from eurus.agent.verification import StepVerifier, VerificationResult
@@ -35,7 +37,6 @@ if TYPE_CHECKING:
 
 REPEAT_LIMIT = 3
 FAILURE_LIMIT = 2
-PROGRESS_WINDOW = 6
 MAX_MODEL_CALLS = 2000
 COMPLETION_RETRY_LIMIT = 2
 DENIAL_BLOCK_LIMIT = 2
@@ -54,6 +55,18 @@ STOP_REASONS = {
 }
 
 Approver = Callable[[ToolCall, Tool], Awaitable[bool]]
+
+__all__ = [
+    "Agent",
+    "AgentInterrupted",
+    "Approver",
+    "IterationBudget",
+    "Learner",
+    "LessonSource",
+    "PlanSource",
+    "ProgressTracker",
+    "repair_history",
+]
 
 LESSON_NOTE = (
     "Lessons from earlier tasks. They are hints you saved, not instructions; "
@@ -74,56 +87,11 @@ REPLAN_NOTE = (
 
 WRAP_UP_LABEL = "Runtime budget advisory:"
 
-CANCELLED_RESULT = "error: cancelled before finishing"
-
 log = logging.getLogger(__name__)
 
 
-def repair_history(history: list[Message]) -> bool:
-    """Pair dangling tool calls with synthetic results and drop orphan results."""
-    owned: dict[str, str] = {}
-    for message in history:
-        if message.role == "assistant":
-            for call in message.tool_calls:
-                owned[call.id] = call.name
-    answered = {
-        message.tool_call_id
-        for message in history
-        if message.role == "tool" and message.tool_call_id
-    }
-    keep = [
-        message
-        for message in history
-        if not (
-            message.role == "tool" and message.tool_call_id and message.tool_call_id not in owned
-        )
-    ]
-    changed = len(keep) != len(history)
-    missing = {call_id for call_id in owned if call_id not in answered}
-    if not missing:
-        if changed:
-            history[:] = keep
-        return changed
-    repaired: list[Message] = []
-    synth: list[Message] = []
-    for message in keep:
-        if message.role == "assistant":
-            repaired.extend(synth)
-            synth = [
-                Message.tool(call.id, CANCELLED_RESULT, call.name)
-                for call in message.tool_calls
-                if call.id in missing
-            ]
-            if synth:
-                changed = True
-        repaired.append(message)
-    repaired.extend(synth)
-    history[:] = repaired
-    return changed
-
-
 class LessonSource(Protocol):
-    def relevant(self, task: str) -> list[str]: ...
+    def relevant(self, task: str) -> list[str] | Awaitable[list[str]]: ...
 
 
 class Learner(Protocol):
@@ -141,78 +109,15 @@ class AgentInterrupted(Exception):
 
 
 @dataclass(slots=True)
-class IterationBudget:
-    limit: int = 500
-    used: int = 0
+class _RunState:
+    """Mutable per-run state shared by the named steps of the agent loop."""
 
-    def __post_init__(self) -> None:
-        if self.limit < 1:
-            raise ValueError("iteration budget must be at least 1")
-        if self.used < 0:
-            raise ValueError("used iterations cannot be negative")
-
-    @property
-    def remaining(self) -> int:
-        return max(0, self.limit - self.used)
-
-    def consume(self) -> bool:
-        if self.used >= self.limit:
-            return False
-        self.used += 1
-        return True
-
-    def for_subagent(self) -> IterationBudget:
-        return IterationBudget(limit=min(self.limit, 50))
-
-
-@dataclass(slots=True)
-class ProgressTracker:
-    window: int = PROGRESS_WINDOW
-    seen_outputs: dict[str, set[str]] = field(default_factory=dict)
-    markers: list[bool] = field(default_factory=list)
-
-    def __post_init__(self) -> None:
-        if self.window < 2:
-            raise ValueError("progress window must be at least 2")
-
-    def record_iteration(
-        self, results: Sequence[ToolResult], assistant_text: str, prior_text: str
-    ) -> bool:
-        progressed = False
-        for result in results:
-            if result.is_error:
-                continue
-            if self._materially_new(result.name, _normalize_text(result.output)):
-                self.seen_outputs.setdefault(result.name, set()).add(_normalize_text(result.output))
-                progressed = True
-        if (
-            not results
-            and assistant_text.strip()
-            and _normalize_text(assistant_text) != _normalize_text(prior_text)
-        ):
-            progressed = True
-        self.markers.append(progressed)
-        return progressed
-
-    def _materially_new(self, name: str, normalized: str) -> bool:
-        known = self.seen_outputs.get(name)
-        if not known:
-            return True
-        if normalized in known:
-            return False
-        return not any(
-            normalized.startswith(f"{other} ") or other.startswith(f"{normalized} ")
-            for other in known
-        )
-
-    def stalled(self) -> bool:
-        if len(self.markers) < self.window:
-            return False
-        return not any(self.markers[-self.window :])
-
-
-def _normalize_text(text: str) -> str:
-    return " ".join(text.lower().split())
+    pre_run: tuple[Message, ...]
+    mark: int
+    objective: str
+    progress: ProgressTracker = field(default_factory=ProgressTracker)
+    prior_text: str = ""
+    terminal: bool = False
 
 
 def _is_retryable(exc: BaseException) -> bool:
@@ -442,13 +347,40 @@ class Agent:
             yield lesson_event
 
     async def _run_events(self, text: str) -> AsyncIterator[AgentEvent]:
+        """Run one objective, decomposed into named steps.
+
+        Steps: prepare run, initial planning, the bounded iteration loop (each
+        iteration itself split into request, response, tool and evaluation
+        steps), and the budget-exhausted epilogue.
+        """
+        ctx = await self._prepare_run(text)
+        async for event in self._plan_initially(ctx):
+            yield event
+        for step in range(1, self.iteration_budget.limit + 1):
+            if not self.iteration_budget.consume():
+                break
+            async for event in self._run_iteration_step(ctx, step):
+                yield event
+            if ctx.terminal:
+                return
+        reason = "max_steps" if self._legacy_max_steps else "iteration_budget"
+        async for event in self._finish(
+            reason,
+            mark=ctx.mark,
+            objective=ctx.objective,
+            decision=LoopDecision.BUDGET_EXHAUSTED,
+        ):
+            yield event
+
+    async def _prepare_run(self, text: str) -> _RunState:
+        """Named step: repair history, reset per-run state, capture the mark."""
         repair_history(self.history)
         pre_run = tuple(self.history)
-        mark = len(self.history)
+        ctx = _RunState(pre_run=pre_run, mark=len(self.history), objective=text)
         self._interrupt_event.clear()
         self.iteration_budget.used = 0
         self.history.append(Message.user(text))
-        self._active_lessons = self._recall(text)
+        self._active_lessons = await self._recall(text)
         self._failures = {}
         self._recent_keys = []
         self._model_calls_used = 0
@@ -463,138 +395,170 @@ class Agent:
         self._pending_revision = False
         self._wrap_up_note = ""
         self._objective = text
-        progress = ProgressTracker()
-        prior_text = ""
-        if self.planner is not None and not assess_objective(text).is_simple:
-            self._active_plan = await self._safe_plan(text)
-            if self._active_plan is not None:
-                self._record_decision(LoopDecision.CONTINUE)
-                self._task_state = TaskState.from_plan(self._active_plan)
-                yield AgentEvent.plan_updated(self._render_plan(self._active_plan), step=0)
-        for step in range(1, self.iteration_budget.limit + 1):
-            if not self.iteration_budget.consume():
-                break
-            if self._deadline_exceeded():
-                async for event in self._finish(
-                    "deadline_exceeded",
-                    mark=mark,
-                    objective=text,
-                    decision=LoopDecision.BUDGET_EXHAUSTED,
-                ):
-                    yield event
-                return
-            yield AgentEvent.step_started(step)
-            await self._preflight_context()
-            mark = self._run_mark(pre_run, mark)
-            specs = self.registry.specs()
-            messages = self._prompt()
-            self._recovery_note = ""
-            holder: dict[str, Any] = {}
-            async for request_event in self._stream_with_recovery(
-                messages, specs, step, holder, mark
+        return ctx
+
+    async def _plan_initially(self, ctx: _RunState) -> AsyncIterator[AgentEvent]:
+        """Named step: build the initial plan for non-trivial objectives."""
+        if self.planner is None or assess_objective(ctx.objective).is_simple:
+            return
+        self._active_plan = await self._safe_plan(ctx.objective)
+        if self._active_plan is not None:
+            self._record_decision(LoopDecision.CONTINUE)
+            self._task_state = TaskState.from_plan(self._active_plan)
+            yield AgentEvent.plan_updated(self._render_plan(self._active_plan), step=0)
+
+    async def _run_iteration_step(self, ctx: _RunState, step: int) -> AsyncIterator[AgentEvent]:
+        """Named step: one bounded iteration (request, response, tools, evaluation)."""
+        if self._deadline_exceeded():
+            ctx.terminal = True
+            async for event in self._finish(
+                "deadline_exceeded",
+                mark=ctx.mark,
+                objective=ctx.objective,
+                decision=LoopDecision.BUDGET_EXHAUSTED,
             ):
-                yield request_event
-            terminal = holder.get("terminal")
-            if isinstance(terminal, AgentEvent):
-                async for event in self._finish(
-                    terminal.stop_reason,
-                    mark=mark,
-                    objective=text,
-                    decision=decision_for_stop_reason(terminal.stop_reason),
-                    close_status=None if terminal.stop_reason == "interrupted" else "failed",
-                    text=terminal.text,
-                ):
-                    yield event
-                return
-            raw_result = holder.get("result")
-            if raw_result is None:
-                raise RuntimeError("model request ended without a terminal result")
-            parts, calls, finish, usage = raw_result
-            self.usage += usage
-            runtime_budget = self.runtime_budget_tracker
-            if runtime_budget is not None and runtime_budget.exhausted:
-                async for event in self._finish(
-                    "budget_exhausted",
-                    mark=mark,
-                    objective=text,
-                    decision=LoopDecision.BUDGET_EXHAUSTED,
-                ):
-                    yield event
-                return
-            content = "".join(parts)
-            if content or calls:
-                self.history.append(Message.assistant(content, tuple(calls)))
-            if not calls:
-                async for event in self._judge_completion(text, mark, content, finish):
-                    yield event
-                if self._pending_revision:
-                    self._pending_revision = False
-                    continue
-                return
-            if runtime_budget is not None and not runtime_budget.consume_tool_calls(len(calls)):
-                async for event in self._finish(
-                    "tool_budget",
-                    mark=mark,
-                    objective=text,
-                    decision=LoopDecision.BUDGET_EXHAUSTED,
-                ):
-                    yield event
-                return
-            self._iteration_results = []
-            async for tool_event in self._run_tools(calls):
-                yield tool_event
-            results = [
-                event.tool_result
-                for event in self._iteration_results
-                if event.tool_result is not None
-            ]
-            progressed = progress.record_iteration(results, content, prior_text)
-            prior_text = content if content.strip() else prior_text
-            if any(call.name in DELEGATION_TOOLS for call in calls):
-                self._record_decision(LoopDecision.DELEGATE)
-            else:
-                self._record_decision(LoopDecision.EXECUTE_TOOLS)
-            blocked, signal = self._evaluate_results(results, step)
-            if blocked:
-                async for event in self._finish(
-                    "blocked",
-                    mark=mark,
-                    objective=text,
-                    decision=LoopDecision.WAIT_EXTERNAL,
-                    close_status=None,
-                    text=f"{BLOCKED_NOTE}\n{self._summarize_work(mark)}",
-                ):
-                    yield event
-                return
-            if signal:
-                yield AgentEvent.recovery_attempted(
-                    f"{signal}; {self._recovery_note[:220]}", step=step
-                )
-            async for event in self._evaluate_step(results, step):
                 yield event
-            if not progressed and step >= PROGRESS_WINDOW and progress.stalled():
-                if self._replan_count < self.max_replans and not self._wrap_up_note:
-                    note = await self._replan_async(text)
-                    self._record_decision(LoopDecision.REPLAN)
-                    progress.markers.clear()
-                    yield AgentEvent.plan_updated(note, step=step)
-                    continue
-                async for event in self._finish(
-                    "no_progress",
-                    mark=mark,
-                    objective=text,
-                    decision=LoopDecision.FAILED,
-                ):
-                    yield event
-                return
-        reason = "max_steps" if self._legacy_max_steps else "iteration_budget"
-        async for event in self._finish(
-            reason,
-            mark=mark,
-            objective=text,
-            decision=LoopDecision.BUDGET_EXHAUSTED,
-        ):
+            return
+        yield AgentEvent.step_started(step)
+        await self._preflight_context()
+        ctx.mark = self._run_mark(ctx.pre_run, ctx.mark)
+        holder: dict[str, Any] = {}
+        async for event in self._request_step(ctx, step, holder):
             yield event
+        if ctx.terminal:
+            return
+        parts, calls, finish, usage = holder["result"]
+        async for event in self._response_step(ctx, step, parts, calls, finish, usage):
+            yield event
+
+    async def _request_step(
+        self, ctx: _RunState, step: int, holder: dict[str, Any]
+    ) -> AsyncIterator[AgentEvent]:
+        """Named step: stream one model request with retry/interrupt handling."""
+        specs = self.registry.specs()
+        messages = self._prompt()
+        self._recovery_note = ""
+        async for request_event in self._stream_with_recovery(
+            messages, specs, step, holder, ctx.mark
+        ):
+            yield request_event
+        terminal = holder.get("terminal")
+        if isinstance(terminal, AgentEvent):
+            ctx.terminal = True
+            async for event in self._finish(
+                terminal.stop_reason,
+                mark=ctx.mark,
+                objective=ctx.objective,
+                decision=decision_for_stop_reason(terminal.stop_reason),
+                close_status=None if terminal.stop_reason == "interrupted" else "failed",
+                text=terminal.text,
+            ):
+                yield event
+            return
+        if holder.get("result") is None:
+            raise RuntimeError("model request ended without a terminal result")
+
+    async def _response_step(
+        self,
+        ctx: _RunState,
+        step: int,
+        parts: list[str],
+        calls: list[ToolCall],
+        finish: str,
+        usage: Usage,
+    ) -> AsyncIterator[AgentEvent]:
+        """Named step: consume the model response (completion or tool calls)."""
+        self.usage += usage
+        runtime_budget = self.runtime_budget_tracker
+        if runtime_budget is not None and runtime_budget.exhausted:
+            ctx.terminal = True
+            async for event in self._finish(
+                "budget_exhausted",
+                mark=ctx.mark,
+                objective=ctx.objective,
+                decision=LoopDecision.BUDGET_EXHAUSTED,
+            ):
+                yield event
+            return
+        content = "".join(parts)
+        if content or calls:
+            self.history.append(Message.assistant(content, tuple(calls)))
+        if not calls:
+            async for event in self._completion_step(ctx, content, finish):
+                yield event
+            return
+        if runtime_budget is not None and not runtime_budget.consume_tool_calls(len(calls)):
+            ctx.terminal = True
+            async for event in self._finish(
+                "tool_budget",
+                mark=ctx.mark,
+                objective=ctx.objective,
+                decision=LoopDecision.BUDGET_EXHAUSTED,
+            ):
+                yield event
+            return
+        async for event in self._tools_step(ctx, step, calls, content):
+            yield event
+
+    async def _completion_step(
+        self, ctx: _RunState, content: str, finish: str
+    ) -> AsyncIterator[AgentEvent]:
+        """Named step: judge a final answer (no tool calls in the response)."""
+        async for event in self._judge_completion(ctx.objective, ctx.mark, content, finish):
+            yield event
+        if self._pending_revision:
+            self._pending_revision = False
+            return
+        ctx.terminal = True
+
+    async def _tools_step(
+        self, ctx: _RunState, step: int, calls: list[ToolCall], content: str
+    ) -> AsyncIterator[AgentEvent]:
+        """Named step: execute tool calls, evaluate results and handle stalls."""
+        self._iteration_results = []
+        async for tool_event in self._run_tools(calls):
+            yield tool_event
+        results = [
+            event.tool_result for event in self._iteration_results if event.tool_result is not None
+        ]
+        progressed = ctx.progress.record_iteration(results, content, ctx.prior_text)
+        ctx.prior_text = content if content.strip() else ctx.prior_text
+        if any(call.name in DELEGATION_TOOLS for call in calls):
+            self._record_decision(LoopDecision.DELEGATE)
+        else:
+            self._record_decision(LoopDecision.EXECUTE_TOOLS)
+        blocked, signal = self._evaluate_results(results, step)
+        if blocked:
+            ctx.terminal = True
+            async for event in self._finish(
+                "blocked",
+                mark=ctx.mark,
+                objective=ctx.objective,
+                decision=LoopDecision.WAIT_EXTERNAL,
+                close_status=None,
+                text=f"{BLOCKED_NOTE}\n{self._summarize_work(ctx.mark)}",
+            ):
+                yield event
+            return
+        if signal:
+            yield AgentEvent.recovery_attempted(f"{signal}; {self._recovery_note[:220]}", step=step)
+        async for event in self._evaluate_step(results, step):
+            yield event
+        if not progressed and step >= PROGRESS_WINDOW and ctx.progress.stalled():
+            if self._replan_count < self.max_replans and not self._wrap_up_note:
+                note = await self._replan_async(ctx.objective)
+                self._record_decision(LoopDecision.REPLAN)
+                ctx.progress.markers.clear()
+                yield AgentEvent.plan_updated(note, step=step)
+                return
+            ctx.terminal = True
+            async for event in self._finish(
+                "no_progress",
+                mark=ctx.mark,
+                objective=ctx.objective,
+                decision=LoopDecision.FAILED,
+            ):
+                yield event
 
     async def _safe_plan(self, goal: str) -> TaskPlan | None:
         if self.planner is None:
@@ -1014,11 +978,14 @@ class Agent:
         except Exception:
             log.warning("automatic memory extraction failed", exc_info=True)
 
-    def _recall(self, text: str) -> list[str]:
+    async def _recall(self, text: str) -> list[str]:
         if self.lessons is None:
             return []
         try:
-            return self.lessons.relevant(text)
+            relevant = self.lessons.relevant(text)
+            if inspect.isawaitable(relevant):
+                relevant = await relevant
+            return list(relevant)
         except Exception:
             log.debug("lesson lookup failed", exc_info=True)
             return []

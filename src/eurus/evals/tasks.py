@@ -547,4 +547,103 @@ TASKS: tuple[EvalTask, ...] = (
             ),
         },
     ),
+    EvalTask(
+        name="read_line_slice",
+        prompt=(
+            "Use read_file with start_line and end_line to read lines 20-25 of notes.txt "
+            "(1-based, inclusive) and create slice.txt containing exactly those lines."
+        ),
+        files={
+            "notes.txt": "".join(f"line {number:02d}\n" for number in range(1, 41)),
+            "test_slice.py": (
+                "from pathlib import Path\n\n\n"
+                "def test_slice_matches():\n"
+                "    expected = ''.join(f'line {number:02d}\\n' for number in range(20, 26))\n"
+                "    assert Path('slice.txt').read_text(encoding='utf-8') == expected\n"
+            ),
+        },
+        solution={"slice.txt": "".join(f"line {number:02d}\n" for number in range(20, 26))},
+    ),
+    EvalTask(
+        name="edit_file_replace_all",
+        prompt=(
+            "config.py contains the old host name twice. Use edit_file to replace every "
+            "occurrence of 'old.example' with 'new.example'. Expect the first attempt to "
+            "fail because the target string is not unique, then handle it correctly."
+        ),
+        files={
+            "config.py": ("HOST = 'old.example'\nFALLBACK = 'old.example'\nPORT = 8080\n"),
+            "test_config_task.py": (
+                "from config import FALLBACK, HOST\n\n\n"
+                "def test_hosts_replaced():\n"
+                "    assert HOST == 'new.example' and FALLBACK == 'new.example'\n"
+            ),
+        },
+        solution={"config.py": "HOST = 'new.example'\nFALLBACK = 'new.example'\nPORT = 8080\n"},
+    ),
+    EvalTask(
+        name="create_file_overwrite_refusal",
+        prompt=(
+            "Create a new file summary.md with the single line 'summary: ready'. report.md "
+            "already exists: do not destroy its content; add a final line 'updated: yes' "
+            "using edit_file instead of overwriting the whole file."
+        ),
+        files={
+            "report.md": "# Report\n\noriginal body\n",
+            "test_report.py": (
+                "from pathlib import Path\n\n\n"
+                "def test_summary_created():\n"
+                "    assert Path('summary.md').read_text(encoding='utf-8').strip() "
+                "== 'summary: ready'\n\n\n"
+                "def test_report_preserved_and_updated():\n"
+                "    text = Path('report.md').read_text(encoding='utf-8')\n"
+                "    assert 'original body' in text and 'updated: yes' in text\n"
+            ),
+        },
+        solution={
+            "summary.md": "summary: ready\n",
+            "report.md": "# Report\n\noriginal body\nupdated: yes\n",
+        },
+    ),
+    EvalTask(
+        name="undo_restores_checkpoint",
+        prompt=(
+            "Use edit_file to change the VERSION line in a.txt from 'version = 1' to "
+            "'version = 2'. Nothing else should change."
+        ),
+        files={
+            "a.txt": "title = demo\nversion = 1\n",
+            "undo_check.py": (
+                "import json\n"
+                "import sys\n"
+                "from pathlib import Path\n\n"
+                "from eurus.coding.checkpoint import CheckpointStore\n\n\n"
+                "def main() -> int:\n"
+                "    root = Path.cwd()\n"
+                "    store = CheckpointStore(home=root)\n"
+                "    manifests = sorted((root / 'undo').glob('*.json'))\n"
+                "    if not manifests:\n"
+                "        print('no checkpoint manifest found')\n"
+                "        return 1\n"
+                "    run_id = manifests[0].stem\n"
+                "    restored, refused = store.undo(run_id, root)\n"
+                "    if 'a.txt' not in restored:\n"
+                "        print(f'a.txt not restored: restored={restored} refused={refused}')\n"
+                "        return 1\n"
+                "    if 'version = 1' not in Path('a.txt').read_text(encoding='utf-8'):\n"
+                "        print('a.txt was not restored to its original content')\n"
+                "        return 1\n"
+                "    return 0\n\n\n"
+                "if __name__ == '__main__':\n"
+                "    sys.exit(main())\n"
+            ),
+            "test_a_task.py": (
+                "from pathlib import Path\n\n\n"
+                "def test_version_updated():\n"
+                "    assert 'version = 2' in Path('a.txt').read_text(encoding='utf-8')\n"
+            ),
+        },
+        solution={"a.txt": "title = demo\nversion = 2\n"},
+        check=(sys.executable, "undo_check.py"),
+    ),
 )

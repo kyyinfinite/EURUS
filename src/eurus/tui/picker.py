@@ -102,3 +102,21 @@ def parse_choice(text: str, visible: int) -> Choice:
             return Choice("select", index=number - 1)
         return Choice("text", text=raw)
     return Choice("text", text=raw)
+
+
+def move_index(index: int, delta: int, total: int) -> int:
+    """Clamped cursor movement for list pickers (pure; no terminal involved)."""
+    if total <= 0:
+        return 0
+    return min(max(index + delta, 0), total - 1)
+
+
+def theme_rows(
+    names: Sequence[str], active: str, describe: Mapping[str, str]
+) -> list[tuple[str, str]]:
+    """Rows for the /theme picker page: marker, name and description per theme."""
+    current = active.lower()
+    return [
+        (f"{'*' if name.lower() == current else ' '} {name}", describe.get(name, ""))
+        for name in names
+    ]

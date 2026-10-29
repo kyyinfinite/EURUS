@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from eurus.models import Usage
 
-BUILTIN_PRICES_UPDATED_AT = "2026-10-01"
+BUILTIN_PRICES_UPDATED_AT = "2026-10-29"
 
 _BUILTIN_TABLE: dict[str, dict[str, float]] = {
     "openai/gpt-4o": {"input_per_mtok": 2.50, "output_per_mtok": 10.00},
@@ -17,9 +19,14 @@ _BUILTIN_TABLE: dict[str, dict[str, float]] = {
     "groq/llama-3.3-70b-versatile": {"input_per_mtok": 0.59, "output_per_mtok": 0.79},
     "groq/llama-3.1-8b-instant": {"input_per_mtok": 0.05, "output_per_mtok": 0.08},
     "gemini/gemini-2.0-flash": {"input_per_mtok": 0.10, "output_per_mtok": 0.40},
+    "nvidia/llama-3.1-nemotron-70b-instruct": {"input_per_mtok": 0.60, "output_per_mtok": 0.60},
+    "nvidia/llama-3.3-nemotron-super-49b-v1": {"input_per_mtok": 0.40, "output_per_mtok": 0.40},
+    "nvidia/nemotron-4-340b-instruct": {"input_per_mtok": 1.20, "output_per_mtok": 1.20},
 }
 
 MAX_PRICE_ENTRIES = 500
+PRICES_FILE = "prices.toml"
+UNKNOWN_COST = "unknown"
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +67,16 @@ class PricingCatalog:
         if price is None:
             return None
         return price.cost_for_usage(usage)
+
+    def cost_label(self, model_ref: str, usage: Usage) -> str:
+        """Human-readable cost: a number for priced models, "unknown" otherwise.
+
+        Unknown models are never reported as 0.0 — that would understate spend.
+        """
+        cost = self.cost_for_usage(model_ref, usage)
+        if cost is None:
+            return UNKNOWN_COST
+        return f"{cost:.4f}"
 
     def describe(self) -> dict[str, Any]:
         return {
@@ -108,8 +125,26 @@ def _validate_price_entry(model: str, entry: Mapping[str, Any], where: str) -> M
     )
 
 
+def _load_prices_file(home: Path | None) -> dict[str, Any]:
+    if home is None:
+        return {}
+    path = home / PRICES_FILE
+    try:
+        with path.open("rb") as handle:
+            data = tomllib.load(handle)
+    except FileNotFoundError:
+        return {}
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise ValueError(f"cannot read {path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} must contain a table")
+    return data
+
+
 def build_pricing_catalog(
     configured: Mapping[str, Any] | None = None,
+    *,
+    home: Path | None = None,
 ) -> PricingCatalog:
     prices: dict[str, ModelPrice] = {}
     for model, entry in _BUILTIN_TABLE.items():
@@ -121,6 +156,21 @@ def build_pricing_catalog(
         )
     source = "builtin"
     updated_at = BUILTIN_PRICES_UPDATED_AT
+    file_data = _load_prices_file(home)
+    file_models = file_data.get("models") if file_data else None
+    if file_models is not None:
+        if not isinstance(file_models, Mapping):
+            raise ValueError(f"{PRICES_FILE}: models must be a table")
+        if len(file_models) > MAX_PRICE_ENTRIES:
+            raise ValueError(f"{PRICES_FILE}: models cannot exceed {MAX_PRICE_ENTRIES} entries")
+        for model, entry in file_models.items():
+            where = f"{PRICES_FILE}:models.{model}"
+            price = _validate_price_entry(str(model), entry, where)
+            prices[price.model] = price
+            source = "file"
+        file_updated = str(file_data.get("updated_at", "") or "")
+        if file_updated:
+            updated_at = file_updated
     if configured:
         models = configured.get("models")
         if models is not None:

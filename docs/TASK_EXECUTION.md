@@ -23,16 +23,18 @@ bypasses tool approval or workspace boundaries.
 calls, tokens, and cost. Cost budgets are enforced only when a price is
 configured for every model used; otherwise the run reports
 `cost.tracking_unavailable` and never presents an invented cost as an estimate.
-Pricing comes from the built-in catalog and can be overridden in configuration:
+Pricing comes from the built-in catalog and can be overridden in
+`$EURUS_HOME/prices.toml` and then in configuration (later sources win):
 
 ```toml
-[pricing]
-updated_at = "2026-10-01"
+updated_at = "2026-10-29"
 
-[pricing.models."groq/llama-3.3-70b-versatile"]
+[models."groq/llama-3.3-70b-versatile"]
 input_per_mtok = 0.59
 output_per_mtok = 0.79
 ```
+
+Models without a price are reported as cost `unknown`, never as 0.
 
 ## Bounded orchestration API
 
@@ -93,3 +95,21 @@ deadlines. On gateway restart, queued tasks are re-dispatched automatically;
 interrupted tasks resume only after the user runs `/resume` (with
 `--ack-side-effects` when side effects may have started). `/pause` interrupts a
 task while keeping its state recoverable.
+
+## Checkpoints and undo
+
+Before an approved mutating file tool runs (`apply_patch`, `edit_file`,
+`create_file`, `document_create`, `document_replace`, `apply_patchset`), the
+engine records a per-run checkpoint with the pre-mutation content of every
+target path under `$EURUS_HOME/undo/<run_id>.json`. When the run finishes, the
+checkpoint is finalized with the content hash the run left behind.
+
+- `/undo` (TUI) restores the files changed by the latest checkpointed run in
+  the workspace; `/undo <run_id>` targets a specific run.
+- `eurus undo <run_id> [--workspace PATH]` does the same from the CLI.
+
+A file is restored only when its current bytes still match what the run wrote;
+anything modified after the run is refused and reported. Files larger than
+1 MB or not valid UTF-8 are skipped by the snapshot and cannot be restored.
+No git repository is required, so undo also works outside version control;
+shell-tool mutations are not captured by these checkpoints.

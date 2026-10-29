@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import logging
 import re
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime, timedelta
@@ -8,22 +10,13 @@ from pathlib import Path
 from typing import Any
 
 from eurus.memory.lexical import cosine_similarity, lexical_vector
+from eurus.security.redaction import (
+    EMAIL_PATTERN,
+    SENSITIVE_ASSIGNMENT_PATTERN,
+    contains_secret,
+)
 from eurus.sessions import SessionStore
 
-_SECRET_PATTERNS = (
-    re.compile(
-        r"(?i)\b(?:api[_ -]?key|access[_ -]?token|password|passwd|secret|session[_ -]?cookie)"
-        r"\b\s*[:=]\s*\S+"
-    ),
-    re.compile(
-        r"(?i)\b(?:my\s+)?(?:password|passphrase|private key|recovery phrase)\s+(?:is|=|:)\s*\S+"
-    ),
-    re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{12,}"),
-    re.compile(
-        r"(?i)\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,})\b"
-    ),
-    re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I),
-)
 _SENSITIVE_TERMS = re.compile(
     r"(?i)\b(?:diagnosed with|my medical|my health condition|my religion|my sexual|"
     r"my political affiliation|social security number|credit card number)\b"
@@ -317,8 +310,11 @@ class MemoryManager:
     def _validate_content(content: str) -> None:
         if not content or len(content) > 5000:
             raise ValueError("memory content must be between 1 and 5000 characters")
-        if _SENSITIVE_TERMS.search(content) or any(
-            secret.search(content) for secret in _SECRET_PATTERNS
+        if (
+            _SENSITIVE_TERMS.search(content)
+            or EMAIL_PATTERN.search(content)
+            or SENSITIVE_ASSIGNMENT_PATTERN.search(content)
+            or contains_secret(content)
         ):
             raise ValueError("memory content rejected by privacy policy")
 
@@ -326,7 +322,12 @@ class MemoryManager:
         text = " ".join(user_text.split())
         if not text or len(text) > 8_000:
             return []
-        if _SENSITIVE_TERMS.search(text) or any(secret.search(text) for secret in _SECRET_PATTERNS):
+        if (
+            _SENSITIVE_TERMS.search(text)
+            or EMAIL_PATTERN.search(text)
+            or SENSITIVE_ASSIGNMENT_PATTERN.search(text)
+            or contains_secret(text)
+        ):
             return []
         candidates: list[dict[str, Any]] = []
         for pattern, memory_type in _CANDIDATE_PATTERNS:
@@ -336,8 +337,11 @@ class MemoryManager:
             content = match.group(1).strip(" \t\r\n.,;:!?\"'")
             if len(content) < 4 or len(content) > self.max_content_chars:
                 continue
-            if _SENSITIVE_TERMS.search(content) or any(
-                secret.search(content) for secret in _SECRET_PATTERNS
+            if (
+                _SENSITIVE_TERMS.search(content)
+                or EMAIL_PATTERN.search(content)
+                or SENSITIVE_ASSIGNMENT_PATTERN.search(content)
+                or contains_secret(content)
             ):
                 continue
             candidates.append(
@@ -528,6 +532,14 @@ class MemoryManager:
 
 
 class PromptMemory:
+    """Combines saved lessons and user memories for the agent prompt.
+
+    One MemoryManager is created lazily and reused for every recall, and all
+    SQLite work runs in a worker thread via asyncio.to_thread. Memory lines are
+    labeled "[memory]" so they stay distinguishable from lesson lines in the
+    prompt; the caller keeps the bounded char budget and untrusted-context note.
+    """
+
     def __init__(
         self, database: Path, lessons: Any, *, max_chars: int = 1800, scope: str = "global"
     ) -> None:
@@ -535,10 +547,14 @@ class PromptMemory:
         self.lessons = lessons
         self.max_chars = max_chars
         self.scope = scope
+        self._manager: MemoryManager | None = None
 
-    def relevant(self, task: str) -> list[str]:
-        import re
+    def _get_manager(self) -> MemoryManager:
+        if self._manager is None:
+            self._manager = MemoryManager(self.database)
+        return self._manager
 
+    def _memory_lines(self, task: str) -> list[str]:
         terms = list(
             dict.fromkeys(
                 word
@@ -546,16 +562,27 @@ class PromptMemory:
                 if len(word) >= 3 and word.isalnum()
             )
         )[:12]
-        items = self.lessons.relevant(task)
-        if self.database.exists() and terms:
-            manager = MemoryManager(self.database)
-            rows = manager.store.relevant_memories(terms, 8, scope=self.scope)
-            items.extend(
-                f"[{row.get('memory_type', 'fact')}] {row['content']}"
-                for row in rows
-                if row.get("category") != "lesson" and float(row.get("confidence", 0.7)) >= 0.55
-            )
-            items.extend(manager.curated_context(scope=self.scope, max_chars=self.max_chars))
+        if not self.database.exists() or not terms:
+            return []
+        manager = self._get_manager()
+        rows = manager.store.relevant_memories(terms, 8, scope=self.scope)
+        lines = [
+            f"[memory] [{row.get('memory_type', 'fact')}] {row['content']}"
+            for row in rows
+            if row.get("category") != "lesson" and float(row.get("confidence", 0.7)) >= 0.55
+        ]
+        lines.extend(
+            f"[memory] {line}"
+            for line in manager.curated_context(scope=self.scope, max_chars=self.max_chars)
+        )
+        return lines
+
+    async def relevant(self, task: str) -> list[str]:
+        items = list(self.lessons.relevant(task))
+        try:
+            items.extend(await asyncio.to_thread(self._memory_lines, task))
+        except Exception:
+            logging.getLogger(__name__).debug("memory recall failed", exc_info=True)
         result: list[str] = []
         used = 0
         for item in items:

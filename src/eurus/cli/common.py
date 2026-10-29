@@ -9,6 +9,7 @@ from eurus import paths
 from eurus.agent.events import AgentEvent
 from eurus.agent.factory import build_agent
 from eurus.agent.loop import Agent
+from eurus.coding.checkpoint import CheckpointStore
 from eurus.config import Config
 from eurus.mcp.manager import MCPToolManager
 from eurus.models import ToolCall, Usage
@@ -89,8 +90,10 @@ def _build_engine(
         run_store=run_store,
         event_store=event_store,
         attempt_store=attempt_store,
+        checkpoint_store=CheckpointStore(),
         pricing=build_pricing_catalog(
-            {"updated_at": config.pricing.updated_at, "models": config.pricing.models}
+            {"updated_at": config.pricing.updated_at, "models": config.pricing.models},
+            home=paths.home_dir(),
         ),
     )
 

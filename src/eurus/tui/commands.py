@@ -26,11 +26,15 @@ COMMANDS: tuple[Command, ...] = (
     ),
     Command(
         "/theme",
-        "Switch, preview or create color themes",
-        "/theme [name|preview|new|path|termux|reset]",
+        "Open the theme picker or switch, preview and create color themes",
+        "/theme [name|list|preview|new|path|termux|reset]",
         "Ctrl+T",
     ),
-    Command("/font", "Install a terminal font", "/font [list|install|status|reset]"),
+    Command(
+        "/font",
+        "List, install or reset the terminal font",
+        "/font [list|install|status|reset]",
+    ),
     Command("/glyphs", "Switch the icon set", "/glyphs [unicode|ascii|nerd|auto]"),
     Command("/sessions", "List saved conversations"),
     Command("/resume", "Resume a saved conversation", "/resume [latest|session-id]"),
@@ -46,6 +50,7 @@ COMMANDS: tuple[Command, ...] = (
     Command("/settings", "Show or change interface settings", shortcut="Ctrl+O"),
     Command("/compact", "Trim old conversation context"),
     Command("/retry", "Resend the last cancelled prompt"),
+    Command("/undo", "Restore files changed by the latest run", "/undo [run-id]"),
     Command("/clear", "Clear conversation and screen", shortcut="Ctrl+N"),
     Command("/exit", "Leave Eurus"),
 )

@@ -29,12 +29,11 @@ dependencies = [
     "rich>=13.7",
     "pygments>=2.17",
     "prompt_toolkit>=3.0.43",
-    "ddgs>=9.14.0",
-    "trafilatura>=2.2.0",
     "tzdata>=2025.2",
 ]
 
 [project.optional-dependencies]
+web = ["ddgs>=9.14.0", "trafilatura>=2.2.0"]
 groq = ["groq>=0.13"]
 genai = ["google-genai>=1.0"]
 sdk = ["groq>=0.13", "google-genai>=1.0"]
@@ -51,6 +50,8 @@ dev = [
     "python-docx>=1.1",
     "openpyxl>=3.1",
     "python-pptx>=1.0",
+    "ddgs>=9.14.0",
+    "trafilatura>=2.2.0",
 ]
 
 [project.scripts]
@@ -62,6 +63,8 @@ path = "src/eurus/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/eurus"]
+# Ship the (user-populated) bundled font folder even when ignore rules would skip it.
+artifacts = ["src/eurus/tui/assets/fonts/.gitkeep", "src/eurus/tui/assets/fonts/*.ttf", "src/eurus/tui/assets/fonts/*.otf"]
 
 [tool.ruff]
 line-length = 100

@@ -18,7 +18,34 @@ MAX_FONT = 40 * 1024 * 1024
 MAGIC = (b"\x00\x01\x00\x00", b"OTTO", b"true", b"ttcf")
 NERD_BASE = "https://github.com/ryanoasis/nerd-fonts/releases/latest/download/"
 BACKUP_SUFFIX = ".eurus-backup"
+FONT_SUFFIXES = (".ttf", ".otf")
 Runner = Callable[[list[str]], bool]
+
+
+def bundled_dir() -> Path:
+    return Path(__file__).resolve().parent / "assets" / "fonts"
+
+
+def bundled_fonts() -> list[Path]:
+    """Font files the user dropped into src/eurus/tui/assets/fonts/, sorted by name."""
+    try:
+        entries = list(bundled_dir().iterdir())
+    except OSError:
+        return []
+    return sorted(
+        (item for item in entries if item.is_file() and item.suffix.lower() in FONT_SUFFIXES),
+        key=lambda item: item.name.lower(),
+    )
+
+
+def find_bundled(name: str) -> Path | None:
+    needle = name.strip().lower()
+    if not needle:
+        return None
+    for path in bundled_fonts():
+        if path.name.lower() == needle or path.stem.lower() == needle:
+            return path
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,11 +272,15 @@ def install_source(
     fetcher: Callable[[str, Path], None] = download,
     runner: Runner = run_command,
 ) -> InstallResult:
-    local = Path(source).expanduser()
-    if source.strip().lower() not in CATALOG and local.exists():
-        name, data = read_local(local)
+    bundled = find_bundled(source)
+    if bundled is not None:
+        name, data = read_local(bundled)
     else:
-        name, data = fetch(lookup(source), fetcher)
+        local = Path(source).expanduser()
+        if source.strip().lower() not in CATALOG and local.exists():
+            name, data = read_local(local)
+        else:
+            name, data = fetch(lookup(source), fetcher)
     return install(name, data, detect_target(environ, filename=name), runner)
 
 

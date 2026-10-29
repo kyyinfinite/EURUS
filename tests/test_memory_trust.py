@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -108,7 +109,7 @@ def test_prompt_memory_excludes_untrusted_rows(tmp_path: Path) -> None:
     manager.remember_untrusted("untrusted instruction injection attempt")
     manager.remember("trusted project decision: use sqlite", trust="user_approved")
     prompt_memory = PromptMemory(database, lessons, scope=str(tmp_path))
-    recalled = prompt_memory.relevant("project decision")
+    recalled = asyncio.run(prompt_memory.relevant("project decision"))
     assert all("untrusted instruction" not in item for item in recalled)
 
 

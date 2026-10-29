@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from eurus.security.redaction import (
     MASK,
-    SENSITIVE_KEYS,
+    SENSITIVE_KEY_NAMES,
     redact_arguments,
     redact_text,
     redact_value,
@@ -12,7 +12,7 @@ from eurus.security.redaction import (
 
 __all__ = [
     "MASK",
-    "SENSITIVE_KEYS",
+    "SENSITIVE_KEY_NAMES",
     "redact_arguments",
     "redact_text",
     "redact_value",

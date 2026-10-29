@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from eurus.agent.factory import build_agent
+from eurus.coding.checkpoint import CheckpointStore
 from eurus.coding.validation import run_validation
 from eurus.config import Config
 from eurus.errors import EurusError
@@ -55,10 +56,19 @@ async def run_task(
     with tempfile.TemporaryDirectory(prefix=f"eurus-eval-{task.name}-") as tmp:
         root = Path(tmp)
         write_files(root, task.files)
+        registry = default_registry(include_capability_tools=True, include_workflow_tools=True)
+        for name in (
+            "recall_memory",
+            "session_search",
+            "remember_memory",
+            "replace_memory",
+            "forget_memory",
+        ):
+            registry.unregister(name)
         agent = build_agent(
             config,
             router,
-            registry=default_registry(include_workflow_tools=True),
+            registry=registry,
             approver=_allow,
             workspace=root,
             stream=False,
@@ -71,6 +81,7 @@ async def run_task(
             run_store=RunStore(database),
             event_store=EventStore(database),
             attempt_store=ToolAttemptStore(database),
+            checkpoint_store=CheckpointStore(home=root),
         )
         steps = 0
         stop_reason = "error"

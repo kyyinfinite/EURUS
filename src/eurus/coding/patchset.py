@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import contextlib
 import difflib
 import hashlib
-import os
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+
+from eurus.coding.paths import atomic_write_text, resolve_workspace_path
+from eurus.errors import ToolError
 
 MAX_PATCH_FILE_BYTES = 1_000_000
 
@@ -41,21 +41,10 @@ class PatchResult:
 
 
 def _resolve(root: Path, relative: str) -> Path:
-    candidate = Path(relative)
-    if not relative or candidate.is_absolute() or ".." in candidate.parts:
-        raise PatchError("patch paths must be non-empty, relative, and cannot contain '..'")
-    resolved_root = root.resolve()
-    current = resolved_root
-    for part in candidate.parts:
-        if part in {"", "."}:
-            continue
-        current = current / part
-        if current.is_symlink():
-            raise PatchError("symbolic links are not allowed in patch paths")
-    target = current.resolve()
-    if target != resolved_root and resolved_root not in target.parents:
-        raise PatchError("patch path is outside the workspace")
-    return target
+    try:
+        return resolve_workspace_path(root, relative, label="patch path")
+    except ToolError as exc:
+        raise PatchError(str(exc)) from exc
 
 
 def preview_patchset(patches: tuple[FilePatch, ...] | list[FilePatch]) -> str:
@@ -79,18 +68,7 @@ def preview_patchset(patches: tuple[FilePatch, ...] | list[FilePatch]) -> str:
 
 
 def _atomic_write(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=".eurus-patch-", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(temporary)
-        raise
+    atomic_write_text(path, content)
 
 
 def apply_patchset(

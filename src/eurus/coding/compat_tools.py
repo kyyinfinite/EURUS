@@ -7,6 +7,6 @@ from eurus.coding.workflow_tools import workflow_tools
 from eurus.tools.base import Tool
 
 
-def phase5_tools() -> list[Tool]:
+def compat_tools() -> list[Tool]:
     """Return the current workflow tools for legacy callers."""
     return workflow_tools()

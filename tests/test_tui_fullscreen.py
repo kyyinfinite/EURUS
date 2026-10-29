@@ -90,11 +90,32 @@ def test_dispatch_runs_command_into_transcript(tmp_path, monkeypatch):
     ui, sink, _ = build_ui(tmp_path, monkeypatch)
 
     async def go():
-        ui.dispatch("/theme")
+        ui.dispatch("/theme list")
         await ui.task
 
     asyncio.run(go())
     assert "midnight" in "\n".join(sink.lines)
+
+
+def test_theme_command_opens_live_preview_picker(tmp_path, monkeypatch):
+    ui, _, session = build_ui(tmp_path, monkeypatch)
+
+    async def go():
+        ui.dispatch("/theme")
+        for _ in range(300):
+            if ui.mode == "theme" and ui.overlay is not None:
+                break
+            await asyncio.sleep(0.01)
+        assert ui.mode == "theme" and ui.overlay is not None
+        assert any(item.action == "theme-name" for item in ui.overlay.items)
+        before = session.renderer.theme
+        ui._overlay_theme_move(1)
+        assert session.renderer.theme != before or ui.overlay.index == 1
+        ui._overlay_escape()
+        assert ui.mode == "chat"
+        assert session.renderer.theme == before
+
+    asyncio.run(go())
 
 
 def test_exit_command_stops_session(tmp_path, monkeypatch):

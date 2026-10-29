@@ -107,7 +107,10 @@ def _search_sync(query: str, limit: int) -> list[dict[str, str]]:
     try:
         from ddgs import DDGS
     except ImportError as exc:
-        raise ToolError("web search dependency missing; install with `pip install -e .`") from exc
+        raise ToolError(
+            "web search requires the optional web extra; "
+            "install with `pip install 'eurus-agent[web]'`"
+        ) from exc
     try:
         results = DDGS().text(query, max_results=limit)
         normalized: list[dict[str, str]] = []

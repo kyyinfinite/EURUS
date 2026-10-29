@@ -1,6 +1,7 @@
 import asyncio
 import io
 import re
+import tomllib
 
 import pytest
 from rich.console import Console
@@ -135,11 +136,13 @@ def build_session(tmp_path, monkeypatch):
 
 def test_theme_command_lists_switches_and_persists(tmp_path, monkeypatch):
     session, console = build_session(tmp_path, monkeypatch)
-    asyncio.run(session.submit("/theme"))
+    asyncio.run(session.submit("/theme list"))
     assert "midnight" in console.export_text()
     asyncio.run(session.submit("/theme paper"))
     assert session.renderer.theme.background == resolve("paper").background
-    assert (tmp_path / "theme").read_text(encoding="utf-8").strip() == "paper"
+    stored = tomllib.loads((tmp_path / "tui.toml").read_text(encoding="utf-8"))
+    assert stored["tui"]["theme"] == "paper"
+    assert not (tmp_path / "theme").exists()
     asyncio.run(session.submit("/theme nope"))
     assert "Unknown theme" in console.export_text()
     assert session.renderer.theme.background == resolve("paper").background

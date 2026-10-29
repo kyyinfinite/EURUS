@@ -53,7 +53,7 @@ The project is being developed with small servers and Android Termux in mind. Op
 | **Runtime durability** | `AgentEngine`, SQLite-backed run/event/tool-attempt/job stores, checkpoints, task-state snapshots, and recovery classification |
 | **Verification** | Step and completion checks that distinguish supported results from unverified claims; criteria-aware step verification |
 | **Safety controls** | Approval hooks for mutating tools, workspace/path controls, action journaling, network guards, and redaction |
-| **Memory and sessions** | Local SQLite session history, FTS5 keyword search, and trust-tiered memory features |
+| **Memory and sessions** | Local SQLite session history, FTS5 keyword search, trust-tiered memory, and budgeted memory injection into prompts |
 | **Research and browser** | Web search/fetch tools; optional browser automation integration |
 | **Extensibility** | Custom tools, validated skill learning with quarantined drafts and owner-approved promotion, optional MCP integration, document workflows, and Telegram gateway |
 | **Terminal UI** | CLI and interactive TUI with themes, model selection, and runtime feedback |
@@ -237,7 +237,7 @@ pip install -e .
 eurus doctor
 ```
 
-Termux does not provide a Docker-style container runtime by default. If you explicitly configure host execution, commands run on the host and are **not isolated by a container**. Use this mode only when you understand the implications and can review approvals carefully.
+Termux does not provide a Docker-style container runtime by default, so Eurus defaults to the non-isolated host backend with `sandbox.required = false` there. Commands run on the host and are **not isolated by a container**; the approval gate is the only control before execution. Use this mode only when you understand the implications and can review approvals carefully.
 
 See the Termux notes in the project documentation before enabling shell execution.
 
@@ -286,6 +286,7 @@ Use `eurus --help`, `eurus <command> --help`, and `eurus-tui --help` for the com
 Install only the extras you need:
 
 ```bash
+pip install -e ".[web]"      # Web search and fetch (ddgs + trafilatura)
 pip install -e ".[mcp]"        # Model Context Protocol
 pip install -e ".[telegram]"   # Telegram gateway
 pip install -e ".[browser]"    # Browser integration
@@ -307,7 +308,8 @@ Browser automation may require separate browser binaries and platform setup. Ins
 - [Multi-file Workflow](docs/MULTI_FILE_WORKFLOW.md) — workspace coding workflow
 - [Office Artifacts](docs/OFFICE_ARTIFACTS.md) — document and office file tools
 - [Clean-room Notes](docs/CLEAN_ROOM.md) — project design and provenance notes
-- [Memory](docs/MEMORY.md) — long-lived memory configuration
+- [Memory](docs/MEMORY.md) — long-lived memory configuration and prompt injection
+- [Task Execution](docs/TASK_EXECUTION.md) — run lifecycle, budgets, checkpoints, and undo
 - [Reminders](docs/REMINDERS.md) — persistent Telegram reminders
 - [Contributing](CONTRIBUTING.md) — development workflow
 - [Security Policy](SECURITY.md) — reporting security issues
@@ -336,3 +338,5 @@ If you experiment with Eurus, please include reproducible steps, environment det
 ## License
 
 Eurus is released under the [MIT License](LICENSE).
+
+# sentinel

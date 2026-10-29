@@ -6,6 +6,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any
 
+from eurus.coding.paths import atomic_write_text, resolve_workspace_path
 from eurus.errors import ToolError
 from eurus.tools.base import Tool, ToolContext
 
@@ -15,22 +16,7 @@ DOCUMENT_EXTENSIONS = TEXT_EXTENSIONS | {".docx", ".xlsx", ".pptx"}
 
 
 def _resolve(context: ToolContext, relative: str) -> Path:
-    candidate = Path(relative)
-    if candidate.is_absolute() or not candidate.parts:
-        raise ToolError("document path must be relative to the workspace")
-    root = context.workspace.resolve()
-    cursor = root
-    for part in candidate.parts:
-        if part in {"", ".", ".."}:
-            if part == "..":
-                raise ToolError("document path cannot traverse parent directories")
-            continue
-        cursor = cursor / part
-        if cursor.is_symlink():
-            raise ToolError("symbolic links are not allowed in document paths")
-    target = (root / candidate).resolve()
-    if target != root and root not in target.parents:
-        raise ToolError("document path is outside the configured workspace")
+    target = resolve_workspace_path(context.workspace, relative, label="document path")
     if target.suffix.lower() not in DOCUMENT_EXTENSIONS:
         raise ToolError(
             "supported document formats: .md, .txt, .rst, .csv, .json, .html, .xml, "
@@ -131,7 +117,6 @@ async def _document_create(arguments: dict[str, Any], context: ToolContext) -> s
     if path.exists():
         raise ToolError("document already exists; read it and use document_replace instead")
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
         if path.suffix.lower() == ".docx":
             try:
                 Document = import_module("docx").Document
@@ -144,7 +129,7 @@ async def _document_create(arguments: dict[str, Any], context: ToolContext) -> s
                 document.add_paragraph(paragraph)
             document.save(path)
         else:
-            path.write_text(content, encoding="utf-8")
+            atomic_write_text(path, content)
     except ToolError:
         raise
     except OSError as exc:
@@ -166,7 +151,7 @@ async def _document_replace(arguments: dict[str, Any], context: ToolContext) -> 
     if len(replacement.encode("utf-8")) > MAX_DOCUMENT_BYTES:
         raise ToolError("replacement exceeds the 2 MB limit")
     try:
-        path.write_text(replacement, encoding="utf-8")
+        atomic_write_text(path, replacement)
     except OSError as exc:
         raise ToolError(f"cannot update document: {exc}") from exc
     relative = path.relative_to(context.workspace.resolve()).as_posix()

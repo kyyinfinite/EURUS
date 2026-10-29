@@ -29,3 +29,7 @@ Supported types are `profile`, `preference`, `project_fact`, `fact`, `episode`, 
 `MemoryManager.statistics()` returns counts by type. `purge_expired()` removes expired records, and `enforce_budget()` applies retention and count limits. `correct()` and `forget_scoped()` verify that the target memory is visible in the requested scope before changing or deleting it. SQLite triggers keep the FTS index synchronized on updates and deletes. Existing database files are migrated additively when opened.
 
 The privacy export and purge APIs on `SessionStore` include saved memories. Purging deletes memory rows and their FTS entries through existing triggers. The application should treat memory contents as untrusted context, not executable instructions.
+
+## Prompt injection
+
+Relevant memories are injected into model prompts under a bounded character budget (`max_chars`, default 1800). Each line is labeled `[memory]` and kept separate from lessons, which carry their own note stating they are hints and not instructions. Quarantined (untrusted) memories are never injected. Recall runs its SQLite work off the event loop through `asyncio.to_thread` and reuses a single `MemoryManager` per `PromptMemory` instance.
