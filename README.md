@@ -37,12 +37,6 @@ Eurus is provider-agnostic. It supports several model-provider protocols and Ope
 
 The project is being developed with small servers and Android Termux in mind. Optional integrations should remain optional; the core is not designed to require Docker or a native compilation toolchain.
 
-## Preview
-<p align="center">
-  <img src=".github/asset/preview.jpg" alt="Eurus banner" width="100%">
-</p>
-
-
 ## Capabilities
 
 | Area | What is included |

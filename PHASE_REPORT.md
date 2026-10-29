@@ -163,3 +163,10 @@ installed here (see NOT VERIFIED); it was added to the CI matrix only.
   headless prompt_toolkit harness and unit suites).
 - Real httpcore upgrade scenarios (the guard test documents the failure path
   but upstream behavior can only be verified when httpcore changes).
+
+## Fix — stale bytecode flake (CI Python 3.11)
+
+- Cause: `edit_file_replace_all` rewrites `config.py` with a same-length string ('old.example' -> 'new.example') within the same second as the first check run; the `.pyc` written by the first run is accepted as fresh (mtime is stored in whole seconds, size is equal), so the second run imports the old code.
+- Fix: `run_validation` and `scrubbed_env` set `PYTHONDONTWRITEBYTECODE=1`, so checks and host shell commands never reuse a stale `.pyc` after an agent edit.
+- Added `tests/test_stale_bytecode.py` (pins the rewritten file's mtime to the original to force the condition).
+- NOT VERIFIED: pytest/mypy/ruff were not run for this fix in this environment (dependencies not installed); the stale-pyc mechanism itself was reproduced with plain Python.

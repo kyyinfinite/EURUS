@@ -32,6 +32,7 @@ def _termux_preload(value: str) -> bool:
 
 def scrubbed_env() -> dict[str, str]:
     env = {name: os.environ[name] for name in SAFE_ENV if name in os.environ}
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     if is_termux():
         for name in TERMUX_ENV:
             if name in os.environ:

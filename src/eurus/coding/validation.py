@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from collections.abc import Mapping
@@ -58,6 +59,7 @@ def run_validation(
     root = workspace.expanduser().resolve()
     if not root.is_dir():
         raise ValueError("workspace must be an existing directory")
+    environment = {**(os.environ if env is None else env), "PYTHONDONTWRITEBYTECODE": "1"}
     started = time.monotonic()
     try:
         result = subprocess.run(
@@ -68,7 +70,7 @@ def run_validation(
             timeout=timeout_seconds,
             check=False,
             shell=False,
-            env=None if env is None else dict(env),
+            env=environment,
         )
         return ValidationResult(
             command,
