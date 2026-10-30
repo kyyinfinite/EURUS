@@ -17,7 +17,6 @@ STATUSES: tuple[str, ...] = (READY, MISSING, BROKEN, OUTDATED, OPTIONAL, BLOCKED
 MANDATORY_BAD = frozenset({MISSING, BROKEN, BLOCKED})
 
 
-
 class ConfigUnset(Enum):
     UNSET = "unset"
 
