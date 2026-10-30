@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import asyncio
@@ -344,9 +343,7 @@ def test_secrets_redacted_from_text() -> None:
         session = await manager.session_for("run-1")
         session.remember_secret("hunter2")
 
-        assert session.redact(
-            "password is hunter2 ok"
-        ) == "password is •••••• ok"
+        assert session.redact("password is hunter2 ok") == "password is •••••• ok"
 
         await manager.close_all()
 
@@ -367,9 +364,7 @@ def test_resolve_secret_from_environment(
 
         session = await manager.session_for("run-1")
 
-        assert session.resolve_secret(
-            "value={{secret:TOKEN}}"
-        ) == "value=abc123"
+        assert session.resolve_secret("value={{secret:TOKEN}}") == "value=abc123"
 
         with pytest.raises(ToolError, match="EURUS_SECRET_MISSING"):
             session.resolve_secret("{{secret:MISSING}}")
@@ -485,9 +480,7 @@ def test_build_backend_selects_playwright(
         lambda: True,
     )
 
-    backend = build_backend(
-        _settings(backend="playwright")
-    )
+    backend = build_backend(_settings(backend="playwright"))
 
     assert type(backend).__name__ == "PlaywrightBackend"
 
@@ -504,15 +497,11 @@ def test_build_backend_rejects_missing_playwright(
         ToolError,
         match="Playwright is not installed",
     ):
-        build_backend(
-            _settings(backend="playwright")
-        )
+        build_backend(_settings(backend="playwright"))
 
 
 def test_build_backend_selects_cdp_variants() -> None:
-    cdp = build_backend(
-        _settings(backend="cdp")
-    )
+    cdp = build_backend(_settings(backend="cdp"))
 
     assert type(cdp).__name__ == "CdpBackend"
 
@@ -531,9 +520,7 @@ def test_build_backend_rejects_unknown_backend() -> None:
         ToolError,
         match="unknown browser backend",
     ):
-        build_backend(
-            _settings(backend="carrier-pigeon")
-        )
+        build_backend(_settings(backend="carrier-pigeon"))
 
 
 def test_settings_from_config_mapping() -> None:
