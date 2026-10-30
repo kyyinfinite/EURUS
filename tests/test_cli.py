@@ -27,11 +27,17 @@ def test_no_subcommand_shows_help(tmp_path):
 
 def test_doctor(tmp_path):
     result = run(tmp_path, "doctor")
-    assert result.exit_code == 0
+    assert result.exit_code == 1
     assert "eurus doctor" in result.output
+    assert "MISSING" in result.output
+    setup = run(tmp_path, "bootstrap", "--yes", "repair")
+    assert setup.exit_code == 0
+    after = run(tmp_path, "doctor")
+    assert after.exit_code == 0
 
 
 def test_doctor_with_model_override(tmp_path):
+    run(tmp_path, "bootstrap", "--yes", "repair")
     result = run(tmp_path, "--model", "groq/x", "doctor")
     assert result.exit_code == 0
 

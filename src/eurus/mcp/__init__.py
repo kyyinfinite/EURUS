@@ -1,5 +1,16 @@
-"""Model Context Protocol client integration for Eurus."""
+"""Model Context Protocol integration: client, server, Google Workspace, auth."""
 
-from eurus.mcp.manager import MCPServerConfig, MCPToolManager
+from eurus.mcp.manager import MCPServerConfig, MCPToolManager, ServerState
+from eurus.mcp.policy import MCPPolicy, RiskDecision, default_policy_path, risk_tag
+from eurus.mcp.runtime import MCPRuntime
 
-__all__ = ["MCPServerConfig", "MCPToolManager"]
+__all__ = [
+    "MCPPolicy",
+    "MCPRuntime",
+    "MCPServerConfig",
+    "MCPToolManager",
+    "RiskDecision",
+    "ServerState",
+    "default_policy_path",
+    "risk_tag",
+]

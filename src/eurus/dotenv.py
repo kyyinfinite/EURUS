@@ -6,11 +6,43 @@ from pathlib import Path
 
 KEY_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 EXTRA_ALLOWED = frozenset({"OLLAMA_BASE_URL", "NVIDIA_BASE_URL"})
+EURUS_ENV_ALLOWED = frozenset(
+    {
+        "EURUS_MODEL",
+        "EURUS_SKILLS",
+        "EURUS_FALLBACK",
+        "EURUS_MAX_STEPS",
+        "EURUS_TEMPERATURE",
+        "EURUS_PERMISSION_MODE",
+        "EURUS_WORKSPACE",
+        "EURUS_LOG_LEVEL",
+        "EURUS_LOG_FILE",
+        "EURUS_LOG_JSON",
+        "EURUS_TIMEOUT",
+        "EURUS_MAX_RETRIES",
+        "EURUS_LOCAL_ONLY",
+        "EURUS_COOLDOWN",
+        "EURUS_MAX_COOLDOWN",
+        "EURUS_RETRY_JITTER",
+        "EURUS_FIRST_TOKEN",
+        "EURUS_TELEGRAM_BOT_TOKEN",
+        "EURUS_TELEGRAM_ALLOWED_USER_IDS",
+        "EURUS_TELEGRAM_ALLOWED_GROUP_IDS",
+        "EURUS_TELEGRAM_APPROVAL_TIMEOUT",
+        "EURUS_REMINDER_TIMEZONE",
+        "EURUS_CHROMIUM",
+        "EURUS_CDP_ENDPOINT",
+    }
+)
 QUOTES = "'\""
 
 
 def is_allowed(name: str) -> bool:
-    return name.endswith("_API_KEY") or name in EXTRA_ALLOWED
+    if name in EURUS_ENV_ALLOWED or name in EXTRA_ALLOWED:
+        return True
+    if name.startswith("EURUS_"):
+        return False
+    return name.endswith("_API_KEY")
 
 
 def _unquote(value: str) -> str:

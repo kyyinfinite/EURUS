@@ -12,7 +12,7 @@ from eurus.agent.factory import build_agent
 from eurus.agent.loop import Agent
 from eurus.coding.checkpoint import CheckpointStore
 from eurus.config import Config
-from eurus.mcp.manager import MCPToolManager
+from eurus.mcp.runtime import MCPRuntime
 from eurus.models import ToolCall, Usage
 from eurus.providers.factory import build_router
 from eurus.providers.router import Router
@@ -101,7 +101,7 @@ def _build_engine(
 
 async def _run_once(config: Config, text: str, stream: bool) -> RunResult:
     router = build_router(config)
-    mcp = MCPToolManager.load(paths.home_dir() / "mcp.json")
+    mcp = MCPRuntime.build(paths.home_dir())
     try:
         await mcp.connect()
         registry = default_registry(include_capability_tools=True, include_workflow_tools=True)

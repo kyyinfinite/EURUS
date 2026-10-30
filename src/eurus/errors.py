@@ -82,3 +82,12 @@ class AllProvidersFailedError(EurusError):
         summary = "; ".join(f"{label}: {error}" for label, error in failures)
         super().__init__(f"all models failed: {summary}")
         self.failures = tuple(failures)
+
+
+class ReauthenticationRequiredError(EurusError):
+    """An integration credential expired or was revoked and must be re-authorized."""
+
+    def __init__(self, message: str, *, account: str = "", provider: str = "") -> None:
+        super().__init__(message)
+        self.account = account
+        self.provider = provider

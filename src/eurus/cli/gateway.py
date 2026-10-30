@@ -15,7 +15,7 @@ from eurus.agent.loop import Agent
 from eurus.cli.base import _state, main
 from eurus.cli.common import _build_engine, _engine_stores
 from eurus.errors import EurusError
-from eurus.mcp.manager import MCPToolManager
+from eurus.mcp.runtime import MCPRuntime
 from eurus.providers.factory import build_router
 from eurus.runtime.engine import AgentEngine
 from eurus.sessions import SessionStore
@@ -103,7 +103,7 @@ def gateway_telegram(ctx: click.Context, max_concurrent: int) -> None:
         from eurus.runtime.application import AgentRuntime
 
         router = build_router(config)
-        mcp = MCPToolManager.load(paths.home_dir() / "mcp.json")
+        mcp = MCPRuntime.build(paths.home_dir())
         runtime: AgentRuntime | None = None
         approval_broker = TelegramApprovalBroker(timeout=approval_timeout)
         try:

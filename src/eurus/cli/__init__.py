@@ -47,6 +47,7 @@ __all__ = [
     "AgentEngine",
     "AgentEvent",
     "Any",
+    "bootstrap",
     "BudgetSpec",
     "ConcurrentRunUpdate",
     "Config",
@@ -87,6 +88,7 @@ __all__ = [
     "annotations",
     "approval_request",
     "asyncio",
+    "auth",
     "browser",
     "build_agent",
     "build_pricing_catalog",
@@ -129,6 +131,8 @@ __all__ = [
 
 
 from eurus.cli import (
+    auth,
+    bootstrap,
     browser,
     common,
     config_cmds,

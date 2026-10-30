@@ -21,7 +21,7 @@ from eurus.catalog import resolve_api_key
 from eurus.coding.checkpoint import CheckpointStore
 from eurus.config import Config
 from eurus.errors import EurusError
-from eurus.mcp.manager import MCPToolManager
+from eurus.mcp.runtime import MCPRuntime
 from eurus.memory.manager import MemoryManager
 from eurus.models import Message, ModelRef, ToolCall, Usage
 from eurus.providers.discovery import Discovery, discover
@@ -113,7 +113,8 @@ class InteractiveSession:
         self.registry: ToolRegistry = default_registry(
             include_capability_tools=True, include_workflow_tools=True
         )
-        self.mcp = MCPToolManager.load(paths.home_dir() / "mcp.json")
+        self.mcp_runtime = MCPRuntime.build(paths.home_dir())
+        self.mcp = self.mcp_runtime.manager
         self._mcp_registered = False
         self.session_approver = SessionScopedApprover(self._approve)
         self._runtime: AgentRuntime | None = None
@@ -1012,16 +1013,11 @@ class InteractiveSession:
                     with span("tui.turn"):
                         router, agent = await self._prepare_runtime()
                         if not self._mcp_registered:
-                            enabled_mcp = [
-                                item for item in self.mcp.configs.values() if item.enabled
-                            ]
-                            connect_timeout = (
-                                sum(item.timeout_seconds for item in enabled_mcp) + 1.0
-                            )
                             await asyncio.wait_for(
-                                self.mcp.connect(), timeout=max(connect_timeout, 1.0)
+                                self.mcp_runtime.connect(),
+                                timeout=self.mcp_runtime.connect_timeout_hint(),
                             )
-                            self.mcp.register_tools(self.registry)
+                            self.mcp_runtime.register_tools(self.registry)
                             self._mcp_registered = True
                         async for event in self._runtime_for_turn().run_agent(
                             self.session_id, agent, prompt, persist=False

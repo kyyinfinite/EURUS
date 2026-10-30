@@ -49,7 +49,7 @@ The project is being developed with small servers and Android Termux in mind. Op
 | **Safety controls** | Approval hooks for mutating tools, workspace/path controls, action journaling, network guards, and redaction |
 | **Memory and sessions** | Local SQLite session history, FTS5 keyword search, trust-tiered memory, and budgeted memory injection into prompts |
 | **Research and browser** | Web search/fetch tools; snapshot-driven browser automation with a pure-Python CDP backend (Termux-first) and an optional Playwright backend |
-| **Extensibility** | Custom tools, validated skill learning with quarantined drafts and owner-approved promotion, optional MCP integration, document workflows, and Telegram gateway |
+| **Extensibility** | Custom tools, validated skill learning with quarantined drafts and owner-approved promotion, native MCP platform (client + server + Google Workspace with OAuth 2.0), document workflows, and Telegram gateway |
 | **Terminal UI** | CLI and interactive TUI with themes, model selection, and runtime feedback |
 
 Availability and maturity vary by feature. See the [roadmap](docs/ROADMAP.md) and the relevant module documentation before relying on a specific workflow.
@@ -143,7 +143,22 @@ pip install -e ".[dev]"
 cp .env.example .env
 ```
 
-Add your provider key to `.env` or export it in your shell. For example:
+### Bootstrap the environment (recommended)
+
+Instead of configuring everything by hand, let the built-in environment manager do it. It detects your platform (Termux, Debian/Ubuntu proot, native Linux, containers/VPS), installs the feature extras you pick, writes the global `~/.eurus/` layout, configures a provider, and verifies the result:
+
+```bash
+eurus bootstrap --check              # read-only inspection of the current environment
+eurus bootstrap                      # interactive dashboard (12 modules)
+eurus bootstrap --quick              # guided end-to-end setup (safe defaults in scripts)
+eurus bootstrap --repair             # show a repair plan, confirm, apply
+eurus doctor                         # health report; --full adds live probes
+eurus setup provider|browser|mcp|telegram|startup|config
+```
+
+Everything bootstrap changes lives under `~/.eurus/` (0700, secrets 0600), is backed up before repair, and is recorded in `~/.eurus/bootstrap/state.json`. See [BOOTSTRAP_ARCHITECTURE.md](BOOTSTRAP_ARCHITECTURE.md), [BOOTSTRAP_IMPLEMENTATION.md](BOOTSTRAP_IMPLEMENTATION.md), [BOOTSTRAP_COMPATIBILITY.md](BOOTSTRAP_COMPATIBILITY.md) and [BOOTSTRAP_TEST_REPORT.md](BOOTSTRAP_TEST_REPORT.md); sample files live in [examples/bootstrap/](examples/bootstrap).
+
+Add your provider key to `~/.eurus/.env` or export it in your shell. For example:
 
 ```bash
 export GROQ_API_KEY="your-key"
@@ -262,7 +277,13 @@ Report security concerns privately according to [SECURITY.md](SECURITY.md).
 | `eurus chat` | Interactive conversation with persistent session support |
 | `eurus-tui` | Launch the terminal UI |
 | `eurus providers` | List configured provider options |
-| `eurus doctor` | Check local setup |
+| `eurus doctor` | Check local setup (`--full` for live probes, `--repair` to fix) |
+| `eurus bootstrap` | Environment dashboard; `--quick/--check/--repair/--update` |
+| `eurus setup provider` | Configure provider, API key and default model |
+| `eurus setup browser` | Detect browser runtimes and self-test the backend |
+| `eurus setup mcp` | Validate and test `~/.eurus/mcp.json` |
+| `eurus setup telegram` | Store the bot token and allowlist (0600) |
+| `eurus setup startup` | Install/remove autostart (systemd, Termux:Boot, cron) |
 | `eurus diagnose` | Diagnose provider/model connectivity |
 | `eurus sessions list` | List saved sessions |
 | `eurus memory search "query"` | Search stored memory |
@@ -297,13 +318,22 @@ Browser automation needs a Chromium binary. On PC/VPS run `playwright install ch
 
 ## Documentation
 
+- [Bootstrap Architecture](BOOTSTRAP_ARCHITECTURE.md) — environment manager design, status vocabulary, global layout
+- [Bootstrap Implementation](BOOTSTRAP_IMPLEMENTATION.md) — component map, requirement trace, bugs fixed during integration
+- [Bootstrap Compatibility](BOOTSTRAP_COMPATIBILITY.md) — platform matrix, dependency/extras matrix, startup mechanisms, limitations
+- [Bootstrap Test Report](BOOTSTRAP_TEST_REPORT.md) — executed test evidence, lint results, end-to-end runs
 - [Architecture and Execution Flow](docs/ARCHITECTURE.md) — runtime boundary, lifecycle, persistence, and recovery
 - [Roadmap](docs/ROADMAP.md) — current priorities and planned work
 - [Provider Configuration](docs/PROVIDERS.md) — providers, fallbacks, and diagnostics
 - [Web Research](docs/WEB_RESEARCH.md) — search and fetch tools
 - [Browser Automation](docs/BROWSER.md) — snapshot-driven browsing, backends, security policy
 - [Task Execution](docs/TASK_EXECUTION.md) — execution model and task workflows
-- [MCP Integration](docs/MCP.md) — optional MCP support
+- [MCP Integration](docs/MCP.md) — native MCP platform: client, server, policies
+- [Google OAuth Setup](docs/GOOGLE_OAUTH.md) — Google Cloud project, OAuth client, secure token storage
+- [Google Workspace Services](docs/GOOGLE_WORKSPACE.md) — Gmail, Drive, Docs, Sheets, Slides, Calendar, Chat, People, Classroom
+- [Eurus MCP Server](docs/MCP_SERVER.md) — expose Eurus tools to external MCP clients
+- [MCP Security](docs/MCP_SECURITY.md) — risk classification, approval policy, token security
+- [Troubleshooting](docs/TROUBLESHOOTING.md) — diagnostics for MCP, Google auth and Termux
 - [Multi-file Workflow](docs/MULTI_FILE_WORKFLOW.md) — workspace coding workflow
 - [Office Artifacts](docs/OFFICE_ARTIFACTS.md) — document and office file tools
 - [Clean-room Notes](docs/CLEAN_ROOM.md) — project design and provenance notes

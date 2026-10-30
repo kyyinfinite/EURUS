@@ -13,7 +13,7 @@ from eurus import paths
 from eurus.agent.factory import build_agent
 from eurus.cli.base import _state, main
 from eurus.cli.common import _build_engine, _deny_remote_approval
-from eurus.mcp.manager import MCPToolManager
+from eurus.mcp.runtime import MCPRuntime
 from eurus.providers.factory import build_router
 from eurus.runtime.budgets import BudgetSpec
 from eurus.runtime.models import RunStatus
@@ -225,7 +225,7 @@ def schedule_daemon(ctx: click.Context, poll_seconds: int, workers: int, owner: 
         profile = job.payload.get("profile", {})
         timeout = int(profile.get("max_runtime_seconds", 1800))
         router = build_router(config)
-        mcp = MCPToolManager.load(paths.home_dir() / "mcp.json")
+        mcp = MCPRuntime.build(paths.home_dir())
         try:
             await mcp.connect()
             registry = default_registry(include_capability_tools=True, include_workflow_tools=True)

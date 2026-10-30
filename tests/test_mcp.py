@@ -21,9 +21,15 @@ def test_stdio_config_round_trip() -> None:
     assert MCPServerConfig.from_dict(config.to_dict()) == config
 
 
-def test_http_config_requires_tls() -> None:
+def test_http_config_requires_tls_outside_loopback() -> None:
     with pytest.raises(ValueError, match="https://"):
-        MCPServerConfig(name="remote", transport="http", url="http://localhost/mcp")
+        MCPServerConfig(name="remote", transport="http", url="http://example.com/mcp")
+
+
+def test_http_config_allows_loopback() -> None:
+    for url in ("http://localhost/mcp", "http://127.0.0.1:8765/mcp", "http://[::1]/mcp"):
+        config = MCPServerConfig(name="local", transport="http", url=url)
+        assert config.url == url
 
 
 def test_config_rejects_unknown_fields() -> None:
@@ -82,7 +88,8 @@ def test_remote_tools_require_approval_and_execute() -> None:
             ToolContext(Path.cwd()),
         )
     )
-    assert result.output == "read ok"
+    assert "read ok" in result.output
+    assert result.output.startswith("[untrusted external content")
     assert result.is_error is False
 
 

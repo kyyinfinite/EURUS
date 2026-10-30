@@ -3,44 +3,18 @@
 from __future__ import annotations
 
 import asyncio
-import platform
-import sys
 
 import click
 from rich.console import Console
 from rich.table import Table
 
-from eurus import __version__, paths
-from eurus.catalog import is_ready, resolve_api_key
+from eurus.catalog import resolve_api_key
 from eurus.cli.base import _state, main
 from eurus.config import Config
 from eurus.diagnose import probe_all
 from eurus.errors import ConfigError, EurusError
 from eurus.models import Message, ModelRef, Usage
 from eurus.providers.factory import build_router, resolve_chain
-
-
-@main.command()
-@click.pass_context
-def doctor(ctx: click.Context) -> None:
-    config = _state(ctx).config
-    keyed = [name for name, spec in sorted(config.providers.items()) if resolve_api_key(spec)]
-    table = Table(title="eurus doctor")
-    table.add_column("Check")
-    table.add_column("Value")
-    table.add_row("eurus", __version__)
-    table.add_row("python", sys.version.split()[0])
-    table.add_row("platform", platform.platform())
-    table.add_row("home", str(paths.home_dir()))
-    table.add_row("model", config.agent.model or "(not set)")
-    table.add_row("permission mode", config.permissions.mode)
-    table.add_row("local only", str(config.network.local_only).lower())
-    table.add_row("providers with keys", ", ".join(keyed) or "none")
-    if config.agent.model:
-        spec = config.providers[ModelRef.parse(config.agent.model).provider]
-        if not is_ready(spec):
-            table.add_row("warning", f"{spec.api_key_env} is not set for the default model")
-    Console().print(table)
 
 
 @main.command()

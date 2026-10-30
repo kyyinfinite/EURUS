@@ -21,7 +21,7 @@ from eurus.cli.common import (
     _run_once,
 )
 from eurus.errors import EurusError
-from eurus.mcp.manager import MCPToolManager
+from eurus.mcp.runtime import MCPRuntime
 from eurus.providers.factory import build_router
 from eurus.sessions import SessionStore
 from eurus.tools.builtin import default_registry
@@ -56,13 +56,13 @@ def chat(ctx: click.Context, stream: bool, session_id: str | None) -> None:
             router = build_router(config)
         except EurusError as exc:
             raise click.ClickException(str(exc)) from exc
-        mcp = MCPToolManager.load(paths.home_dir() / "mcp.json")
+        mcp_runtime = MCPRuntime.build(paths.home_dir())
         try:
-            runner.run(mcp.connect())
+            runner.run(mcp_runtime.connect())
             registry = default_registry(include_capability_tools=True, include_workflow_tools=True)
-            mcp.register_tools(registry)
+            mcp_runtime.register_tools(registry)
         except (RuntimeError, ValueError) as exc:
-            runner.run(mcp.close())
+            runner.run(mcp_runtime.close())
             runner.run(router.aclose())
             raise click.ClickException(str(exc)) from exc
         agent = build_agent(
@@ -171,7 +171,7 @@ def chat(ctx: click.Context, stream: bool, session_id: str | None) -> None:
 
             with contextlib.suppress(Exception):
                 runner.run(close_registry_browser(registry))
-            runner.run(mcp.close())
+            runner.run(mcp_runtime.close())
             runner.run(router.aclose())
 
 
