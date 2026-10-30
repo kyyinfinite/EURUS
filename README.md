@@ -18,11 +18,11 @@
 </p>
 
 <p align="center">
-  <a href="#what-is-eurus">Overview</a> ·
-  <a href="#capabilities">Capabilities</a> ·
-  <a href="#quick-start">Quick start</a> ·
-  <a href="#architecture">Architecture</a> ·
-  <a href="#safety-model">Safety</a> ·
+  <a href="#what-is-eurus">Overview</a> 路
+  <a href="#capabilities">Capabilities</a> 路
+  <a href="#quick-start">Quick start</a> 路
+  <a href="#architecture">Architecture</a> 路
+  <a href="#safety-model">Safety</a> 路
   <a href="#documentation">Docs</a>
 </p>
 
@@ -44,12 +44,12 @@ The project is being developed with small servers and Android Termux in mind. Op
 | **Model providers** | OpenAI-compatible APIs, Anthropic, Gemini REST, and optional official Groq and Google GenAI SDK integrations |
 | **Agent execution** | Async tool-calling loop, bounded iterations, timeouts, retry/fallback handling, and interruption support |
 | **Coding workflows** | Workspace inspection, guarded file operations, patch proposals, validation tools, and multi-file workflows |
-| **Runtime durability** | `AgentEngine`, SQLite-backed run/event/tool-attempt/job stores, checkpoints, task-state snapshots, and recovery classification |
-| **Verification** | Step and completion checks that distinguish supported results from unverified claims; criteria-aware step verification |
+| **Runtime durability** | `AgentEngine`, SQLite-backed run/event/tool-attempt/job stores, checkpoints, and recovery classification |
+| **Verification** | Step and completion checks that distinguish supported results from unverified claims |
 | **Safety controls** | Approval hooks for mutating tools, workspace/path controls, action journaling, network guards, and redaction |
-| **Memory and sessions** | Local SQLite session history, FTS5 keyword search, trust-tiered memory, and budgeted memory injection into prompts |
-| **Research and browser** | Web search/fetch tools; snapshot-driven browser automation with a pure-Python CDP backend (Termux-first) and an optional Playwright backend |
-| **Extensibility** | Custom tools, validated skill learning with quarantined drafts and owner-approved promotion, native MCP platform (client + server + Google Workspace with OAuth 2.0), document workflows, and Telegram gateway |
+| **Memory and sessions** | Local SQLite session history, FTS5 keyword search, and trust-tiered memory features |
+| **Research and browser** | Web search/fetch tools; optional browser automation integration |
+| **Extensibility** | Custom tools, skills, optional MCP integration, document workflows, and Telegram gateway |
 | **Terminal UI** | CLI and interactive TUI with themes, model selection, and runtime feedback |
 
 Availability and maturity vary by feature. See the [roadmap](docs/ROADMAP.md) and the relevant module documentation before relying on a specific workflow.
@@ -143,22 +143,7 @@ pip install -e ".[dev]"
 cp .env.example .env
 ```
 
-### Bootstrap the environment (recommended)
-
-Instead of configuring everything by hand, let the built-in environment manager do it. It detects your platform (Termux, Debian/Ubuntu proot, native Linux, containers/VPS), installs the feature extras you pick, writes the global `~/.eurus/` layout, configures a provider, and verifies the result:
-
-```bash
-eurus bootstrap --check              # read-only inspection of the current environment
-eurus bootstrap                      # interactive dashboard (12 modules)
-eurus bootstrap --quick              # guided end-to-end setup (safe defaults in scripts)
-eurus bootstrap --repair             # show a repair plan, confirm, apply
-eurus doctor                         # health report; --full adds live probes
-eurus setup provider|browser|mcp|telegram|startup|config
-```
-
-Everything bootstrap changes lives under `~/.eurus/` (0700, secrets 0600), is backed up before repair, and is recorded in `~/.eurus/bootstrap/state.json`. See [BOOTSTRAP_ARCHITECTURE.md](BOOTSTRAP_ARCHITECTURE.md), [BOOTSTRAP_IMPLEMENTATION.md](BOOTSTRAP_IMPLEMENTATION.md), [BOOTSTRAP_COMPATIBILITY.md](BOOTSTRAP_COMPATIBILITY.md) and [BOOTSTRAP_TEST_REPORT.md](BOOTSTRAP_TEST_REPORT.md); sample files live in [examples/bootstrap/](examples/bootstrap).
-
-Add your provider key to `~/.eurus/.env` or export it in your shell. For example:
+Add your provider key to `.env` or export it in your shell. For example:
 
 ```bash
 export GROQ_API_KEY="your-key"
@@ -231,9 +216,6 @@ iteration_budget = 100
 timeout_seconds = 120.0
 max_retries = 3
 local_only = false
-cooldown_seconds = 30.0
-retry_jitter = 0.0
-first_token_seconds = 0
 ```
 
 Configuration precedence, provider protocols, SDK extras, and troubleshooting are documented in [Provider Configuration](docs/PROVIDERS.md).
@@ -249,7 +231,7 @@ pip install -e .
 eurus doctor
 ```
 
-Termux does not provide a Docker-style container runtime by default, so Eurus defaults to the non-isolated host backend with `sandbox.required = false` there. Commands run on the host and are **not isolated by a container**; the approval gate is the only control before execution. Use this mode only when you understand the implications and can review approvals carefully.
+Termux does not provide a Docker-style container runtime by default. If you explicitly configure host execution, commands run on the host and are **not isolated by a container**. Use this mode only when you understand the implications and can review approvals carefully.
 
 See the Termux notes in the project documentation before enabling shell execution.
 
@@ -277,20 +259,10 @@ Report security concerns privately according to [SECURITY.md](SECURITY.md).
 | `eurus chat` | Interactive conversation with persistent session support |
 | `eurus-tui` | Launch the terminal UI |
 | `eurus providers` | List configured provider options |
-| `eurus doctor` | Check local setup (`--full` for live probes, `--repair` to fix) |
-| `eurus bootstrap` | Environment dashboard; `--quick/--check/--repair/--update` |
-| `eurus setup provider` | Configure provider, API key and default model |
-| `eurus setup browser` | Detect browser runtimes and self-test the backend |
-| `eurus setup mcp` | Validate and test `~/.eurus/mcp.json` |
-| `eurus setup telegram` | Store the bot token and allowlist (0600) |
-| `eurus setup startup` | Install/remove autostart (systemd, Termux:Boot, cron) |
+| `eurus doctor` | Check local setup |
 | `eurus diagnose` | Diagnose provider/model connectivity |
 | `eurus sessions list` | List saved sessions |
 | `eurus memory search "query"` | Search stored memory |
-| `eurus skills list` | List quarantined skill drafts learned from tasks |
-| `eurus skills promote NAME --yes --outcome ...` | Validate and install a learned skill with owner approval |
-| `eurus skills patch NAME --content-file F` | Update an installed skill with a versioned backup |
-| `eurus eval --compare-learning` | Run the eval suite with lessons off/on and report regressions |
 | `eurus trace <run_id>` | Inspect a redacted runtime timeline |
 | `eurus inspect` | Inspect run details |
 | `eurus history` | Review previous runs |
@@ -304,44 +276,29 @@ Use `eurus --help`, `eurus <command> --help`, and `eurus-tui --help` for the com
 Install only the extras you need:
 
 ```bash
-pip install -e ".[web]"      # Web search and fetch (ddgs + trafilatura)
 pip install -e ".[mcp]"        # Model Context Protocol
 pip install -e ".[telegram]"   # Telegram gateway
-pip install -e ".[browser]"    # Browser automation via Playwright (PC/VPS)
-pip install -e ".[browser-cdp]" # Browser automation via raw CDP (Termux-friendly)
+pip install -e ".[browser]"    # Browser integration
 pip install -e ".[documents]"  # Office/document workflows
 pip install -e ".[groq]"       # Official Groq SDK
 pip install -e ".[genai]"      # Google GenAI SDK
 ```
 
-Browser automation needs a Chromium binary. On PC/VPS run `playwright install chromium` after installing the `[browser]` extra. On Android Termux install the distro package (`pkg install x11-repo && pkg install chromium`) and keep `browser.backend = "auto"` (raw CDP, no Playwright). See [Browser Automation](docs/BROWSER.md) for setup, security policy, and the full tool reference.
+Browser automation may require separate browser binaries and platform setup. Installing the Python extra alone does not guarantee that a browser can launch on every operating system.
 
 ## Documentation
 
-- [Bootstrap Architecture](BOOTSTRAP_ARCHITECTURE.md) — environment manager design, status vocabulary, global layout
-- [Bootstrap Implementation](BOOTSTRAP_IMPLEMENTATION.md) — component map, requirement trace, bugs fixed during integration
-- [Bootstrap Compatibility](BOOTSTRAP_COMPATIBILITY.md) — platform matrix, dependency/extras matrix, startup mechanisms, limitations
-- [Bootstrap Test Report](BOOTSTRAP_TEST_REPORT.md) — executed test evidence, lint results, end-to-end runs
-- [Architecture and Execution Flow](docs/ARCHITECTURE.md) — runtime boundary, lifecycle, persistence, and recovery
-- [Roadmap](docs/ROADMAP.md) — current priorities and planned work
-- [Provider Configuration](docs/PROVIDERS.md) — providers, fallbacks, and diagnostics
-- [Web Research](docs/WEB_RESEARCH.md) — search and fetch tools
-- [Browser Automation](docs/BROWSER.md) — snapshot-driven browsing, backends, security policy
-- [Task Execution](docs/TASK_EXECUTION.md) — execution model and task workflows
-- [MCP Integration](docs/MCP.md) — native MCP platform: client, server, policies
-- [Google OAuth Setup](docs/GOOGLE_OAUTH.md) — Google Cloud project, OAuth client, secure token storage
-- [Google Workspace Services](docs/GOOGLE_WORKSPACE.md) — Gmail, Drive, Docs, Sheets, Slides, Calendar, Chat, People, Classroom
-- [Eurus MCP Server](docs/MCP_SERVER.md) — expose Eurus tools to external MCP clients
-- [MCP Security](docs/MCP_SECURITY.md) — risk classification, approval policy, token security
-- [Troubleshooting](docs/TROUBLESHOOTING.md) — diagnostics for MCP, Google auth and Termux
-- [Multi-file Workflow](docs/MULTI_FILE_WORKFLOW.md) — workspace coding workflow
-- [Office Artifacts](docs/OFFICE_ARTIFACTS.md) — document and office file tools
-- [Clean-room Notes](docs/CLEAN_ROOM.md) — project design and provenance notes
-- [Memory](docs/MEMORY.md) — long-lived memory configuration and prompt injection
-- [Task Execution](docs/TASK_EXECUTION.md) — run lifecycle, budgets, checkpoints, and undo
-- [Reminders](docs/REMINDERS.md) — persistent Telegram reminders
-- [Contributing](CONTRIBUTING.md) — development workflow
-- [Security Policy](SECURITY.md) — reporting security issues
+- [Architecture and Execution Flow](docs/ARCHITECTURE.md) 鈥� runtime boundary, lifecycle, persistence, and recovery
+- [Roadmap](docs/ROADMAP.md) 鈥� current priorities and planned work
+- [Provider Configuration](docs/PROVIDERS.md) 鈥� providers, fallbacks, and diagnostics
+- [Web Research](docs/WEB_RESEARCH.md) 鈥� search and fetch tools
+- [Task Execution](docs/TASK_EXECUTION.md) 鈥� execution model and task workflows
+- [MCP Integration](docs/MCP.md) 鈥� optional MCP support
+- [Multi-file Workflow](docs/MULTI_FILE_WORKFLOW.md) 鈥� workspace coding workflow
+- [Office Artifacts](docs/OFFICE_ARTIFACTS.md) 鈥� document and office file tools
+- [Clean-room Notes](docs/CLEAN_ROOM.md) 鈥� project design and provenance notes
+- [Contributing](CONTRIBUTING.md) 鈥� development workflow
+- [Security Policy](SECURITY.md) 鈥� reporting security issues
 
 ## Development
 
@@ -354,11 +311,11 @@ mypy
 pytest -q
 ```
 
-The CI workflow runs linting, formatting, type checks, tests, packaging checks, command smoke tests, and documentation-link checks on Python 3.11—3.13. Local results may differ when network access, optional dependencies, or platform facilities are unavailable.
+The CI workflow runs linting, formatting, type checks, tests, packaging checks, command smoke tests, and documentation-link checks on Python 3.11鈥�3.13. Local results may differ when network access, optional dependencies, or platform facilities are unavailable.
 
 ## Project status
 
-**Pre-alpha · Active development**
+**Pre-alpha 路 Active development**
 
 Eurus is an evolving research and engineering project. Features may be incomplete, behavior may change, and test coverage does not imply production readiness. The roadmap prioritizes runtime reliability, safe recovery, practical deployment, and deterministic evaluation.
 
@@ -367,5 +324,3 @@ If you experiment with Eurus, please include reproducible steps, environment det
 ## License
 
 Eurus is released under the [MIT License](LICENSE).
-
-# sentinel
