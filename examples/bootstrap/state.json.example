@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-10-30T08:00:00Z",
+  "last_checked": "2026-10-30T08:10:00Z",
+  "platform": "debian",
+  "architecture": "x86_64",
+  "python": {
+    "version": "3.12.16",
+    "venv": true
+  },
+  "features": {
+    "web": "installed",
+    "telegram": "installed",
+    "documents": "installed"
+  },
+  "provider": {
+    "name": "groq"
+  },
+  "last_quick_setup": {
+    "started_at": "2026-10-30T08:00:01Z",
+    "finished_at": "2026-10-30T08:02:24Z",
+    "status": "done",
+    "steps": {
+      "platform": "done",
+      "python": "done",
+      "venv": "done",
+      "dependencies": "done",
+      "features": "done",
+      "install": "done",
+      "provider": "done",
+      "environment": "done",
+      "browser": "done",
+      "integrations": "done",
+      "startup": "skipped",
+      "health": "done",
+      "report": "done"
+    }
+  },
+  "doctor": {
+    "summary": "PARTIAL",
+    "checked_at": "2026-10-30T08:10:00Z"
+  }
+}
