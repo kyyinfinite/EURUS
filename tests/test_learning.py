@@ -137,12 +137,14 @@ def test_agent_injects_lessons_without_touching_history():
         return [event async for event in agent.run("do it")]
 
     asyncio.run(go())
-    systems = [
+    # Lessons ride in the volatile tier, which is appended after the history
+    # (prompt-cache friendly); they are injected at request time only.
+    volatile = [
         message["content"]
         for message in transport.calls[0].payload["messages"]
-        if message["role"] == "system"
+        if "eurus-tier:volatile" in (message.get("content") or "")
     ]
-    assert any("Use small patches." in system for system in systems)
+    assert any("Use small patches." in content for content in volatile)
     assert agent.history[0].content == "<eurus-tier:stable>\nsys\n</eurus-tier:stable>"
 
 

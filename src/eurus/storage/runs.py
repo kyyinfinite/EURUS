@@ -185,11 +185,16 @@ class RunStore:
         *,
         checkpoint_type: str = "runtime",
         expected_version: int | None = None,
+        prune_keep: int | None = None,
     ) -> int:
         if not checkpoint_type.strip():
             raise ValueError("checkpoint_type must be non-empty")
         _validate_checkpoint(state)
         state_json = _serialize(state)
+        raw_iteration = state.get("iteration")
+        iteration = int(raw_iteration) if isinstance(raw_iteration, int) else None
+        side_effect = state.get("side_effect_status")
+        side_effect_status = str(side_effect) if side_effect else None
         with self.database.connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
@@ -203,21 +208,85 @@ class RunStore:
             next_version = current_version + 1
             connection.execute(
                 """INSERT INTO eurus_run_checkpoints(
-                    run_id, checkpoint_version, checkpoint_type, state_json, created_at
-                ) VALUES (?, ?, ?, ?, ?)""",
-                (run_id, next_version, checkpoint_type, state_json, utc_now().isoformat()),
+                    run_id, checkpoint_version, checkpoint_type, state_json, created_at,
+                    iteration, side_effect_status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    run_id,
+                    next_version,
+                    checkpoint_type,
+                    state_json,
+                    utc_now().isoformat(),
+                    iteration,
+                    side_effect_status,
+                ),
             )
             connection.execute(
                 "UPDATE eurus_runs SET checkpoint_version = ?, updated_at = ? WHERE run_id = ?",
                 (next_version, utc_now().isoformat(), run_id),
             )
+            if prune_keep is not None and prune_keep > 0:
+                connection.execute(
+                    """DELETE FROM eurus_run_checkpoints
+                    WHERE run_id = ? AND checkpoint_type = ?
+                    AND checkpoint_version NOT IN (
+                        SELECT checkpoint_version FROM eurus_run_checkpoints
+                        WHERE run_id = ? AND checkpoint_type = ?
+                        ORDER BY checkpoint_version DESC LIMIT ?
+                    )""",
+                    (run_id, checkpoint_type, run_id, checkpoint_type, prune_keep),
+                )
             connection.commit()
         return next_version
 
-    def latest_checkpoint(self, run_id: str) -> dict[str, Any] | None:
+    def prune_checkpoints(self, run_id: str, checkpoint_type: str, keep: int) -> int:
+        """Keep only the newest `keep` checkpoints of one type; returns deleted rows."""
+        if keep < 1:
+            raise ValueError("keep must be at least 1")
+        with self.database.connection() as connection:
+            cursor = connection.execute(
+                """DELETE FROM eurus_run_checkpoints
+                WHERE run_id = ? AND checkpoint_type = ?
+                AND checkpoint_version NOT IN (
+                    SELECT checkpoint_version FROM eurus_run_checkpoints
+                    WHERE run_id = ? AND checkpoint_type = ?
+                    ORDER BY checkpoint_version DESC LIMIT ?
+                )""",
+                (run_id, checkpoint_type, run_id, checkpoint_type, keep),
+            )
+        return cursor.rowcount
+
+    def latest_checkpoint(
+        self, run_id: str, *, checkpoint_type: str | None = "runtime"
+    ) -> dict[str, Any] | None:
+        """Latest full checkpoint (type "runtime" by default) usable for resume."""
+        query = (
+            "SELECT checkpoint_version, checkpoint_type, state_json, created_at "
+            "FROM eurus_run_checkpoints WHERE run_id = ?"
+        )
+        parameters: list[Any] = [run_id]
+        if checkpoint_type is not None:
+            query += " AND checkpoint_type = ?"
+            parameters.append(checkpoint_type)
+        query += " ORDER BY checkpoint_version DESC LIMIT 1"
+        with self.database.connection() as connection:
+            row = connection.execute(query, parameters).fetchone()
+        if row is None:
+            return None
+        return {
+            "run_id": run_id,
+            "checkpoint_version": int(row["checkpoint_version"]),
+            "checkpoint_type": row["checkpoint_type"],
+            "state": json.loads(row["state_json"]),
+            "created_at": datetime.fromisoformat(row["created_at"]),
+        }
+
+    def latest_progress(self, run_id: str) -> dict[str, Any] | None:
+        """Latest checkpoint progress (any type) without parsing state_json."""
         with self.database.connection() as connection:
             row = connection.execute(
-                """SELECT checkpoint_version, checkpoint_type, state_json, created_at
+                """SELECT checkpoint_version, checkpoint_type, iteration,
+                          side_effect_status, created_at
                 FROM eurus_run_checkpoints WHERE run_id = ?
                 ORDER BY checkpoint_version DESC LIMIT 1""",
                 (run_id,),
@@ -228,7 +297,8 @@ class RunStore:
             "run_id": run_id,
             "checkpoint_version": int(row["checkpoint_version"]),
             "checkpoint_type": row["checkpoint_type"],
-            "state": json.loads(row["state_json"]),
+            "iteration": row["iteration"],
+            "side_effect_status": row["side_effect_status"],
             "created_at": datetime.fromisoformat(row["created_at"]),
         }
 

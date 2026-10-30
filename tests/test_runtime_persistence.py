@@ -20,7 +20,7 @@ def test_migration_is_additive_and_idempotent(tmp_path):
         row = connection.execute("SELECT title FROM sessions WHERE id = 's1'").fetchone()
         assert row[0] == "existing"
         versions = connection.execute("SELECT version FROM eurus_schema_migrations").fetchall()
-        assert [row[0] for row in versions] == [1, 2, 3, 4]
+        assert [row[0] for row in versions] == [1, 2, 3, 4, 5]
         tables = {
             row[0]
             for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")

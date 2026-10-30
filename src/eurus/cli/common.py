@@ -19,6 +19,7 @@ from eurus.runtime.engine import AgentEngine, RunResult
 from eurus.runtime.pricing import build_pricing_catalog
 from eurus.security.approval import approval_request
 from eurus.sessions import SessionStore
+from eurus.storage.database import Database
 from eurus.storage.events import EventStore
 from eurus.storage.runs import RunStore
 from eurus.storage.tool_attempts import ToolAttemptStore
@@ -72,9 +73,8 @@ async def _deny_remote_approval(call: ToolCall, tool: Tool) -> bool:
 
 
 def _engine_stores() -> tuple[RunStore, EventStore, ToolAttemptStore]:
-    database = paths.home_dir() / "sessions.sqlite3"
-    runs = RunStore(database)
-    return runs, EventStore(database), ToolAttemptStore(database)
+    database = Database(paths.home_dir() / "sessions.sqlite3")
+    return RunStore(database), EventStore(database), ToolAttemptStore(database)
 
 
 def _build_engine(

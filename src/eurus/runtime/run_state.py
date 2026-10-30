@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import math
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -13,6 +15,24 @@ log = logging.getLogger(__name__)
 
 MAX_DECISION_LINES = 6
 MAX_FAILURE_LINES = 5
+
+
+@dataclass(frozen=True, slots=True)
+class CheckpointInfo:
+    """In-memory mirror of the last checkpoint, so renders avoid SQLite."""
+
+    iteration: int | None = None
+    side_effect_status: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class AttemptEvidence:
+    """In-memory mirror of tool-attempt evidence for the current run."""
+
+    uncertain_mutation: bool = False
+    failures: tuple[tuple[str, str], ...] = ()
+
+
 STATUS_LABELS: dict[RunStatus, str] = {
     RunStatus.QUEUED: "queued",
     RunStatus.RUNNING: "running",
@@ -45,6 +65,8 @@ def render_run_state(
     attempt_store: ToolAttemptStore | None = None,
     run_store: RunStore | None = None,
     tracker: BudgetTracker | None = None,
+    attempt_evidence: AttemptEvidence | None = None,
+    checkpoint_info: CheckpointInfo | None = None,
 ) -> str:
     sections: list[str] = []
     identity = _identity_section(run)
@@ -59,10 +81,10 @@ def render_run_state(
     failures = _failures_section(agent)
     if failures:
         sections.append(failures)
-    attempts = _attempts_section(run, attempt_store)
+    attempts = _attempts_section(run, attempt_store, attempt_evidence)
     if attempts:
         sections.append(attempts)
-    checkpoint = _checkpoint_section(run, run_store)
+    checkpoint = _checkpoint_section(run, run_store, checkpoint_info)
     if checkpoint:
         sections.append(checkpoint)
     if not sections:
@@ -99,8 +121,11 @@ def _budget_section(run: Run, spec: BudgetSpec, agent: Any, tracker: BudgetTrack
         parts.append(token_line)
         parts.append(f"Tool calls: {tracker.tool_calls_used}/{spec.max_tool_calls}")
     remaining = _remaining_seconds(getattr(agent, "deadline_at", None))
-    if remaining is not None:
-        parts.append(f"Wall-clock remaining: {remaining:.0f}s")
+    if remaining is not None and remaining < 120:
+        # Only shown near the limit, bucketed so the prompt prefix is not
+        # rewritten every second.
+        bucket = max(30, math.ceil(remaining / 30) * 30)
+        parts.append(f"Wall-clock remaining: <{bucket}s")
     child_allowance = getattr(agent, "context", None)
     allowance = getattr(child_allowance, "max_child_iterations", None)
     if allowance is not None:
@@ -133,10 +158,28 @@ def _failures_section(agent: Any) -> str:
     return "Recent tool failures:\n" + "\n".join(lines)
 
 
-def _attempts_section(run: Run, attempt_store: ToolAttemptStore | None) -> str:
+def _attempts_section(
+    run: Run,
+    attempt_store: ToolAttemptStore | None,
+    evidence: AttemptEvidence | None,
+) -> str:
+    if evidence is not None:
+        parts: list[str] = []
+        if evidence.uncertain_mutation:
+            parts.append(
+                "- WARNING: a mutating tool ended with unknown outcome; "
+                "do not blindly repeat it. Await reconciliation."
+            )
+        failures = evidence.failures[-3:]
+        if failures:
+            lines = [f"- {name} -> {status}" for name, status in failures]
+            parts.append("Recent failed attempts:\n" + "\n".join(lines))
+        if not parts:
+            return ""
+        return "Tool execution evidence:\n" + "\n".join(parts)
     if attempt_store is None:
         return ""
-    parts: list[str] = []
+    parts = []
     try:
         if attempt_store.has_uncertain_mutation(run.run_id):
             parts.append(
@@ -144,13 +187,13 @@ def _attempts_section(run: Run, attempt_store: ToolAttemptStore | None) -> str:
                 "do not blindly repeat it. Await reconciliation."
             )
         attempts = attempt_store.list_for_run(run.run_id, limit=12)
-        failures = [
+        failed = [
             item
             for item in attempts
             if item.get("status") in {"failed", "timeout", "cancelled", "uncertain"}
         ]
-        if failures:
-            shown = failures[-3:]
+        if failed:
+            shown = failed[-3:]
             lines = [
                 f"- {item.get('tool_name', 'unknown')} -> {item.get('status')}" for item in shown
             ]
@@ -163,7 +206,20 @@ def _attempts_section(run: Run, attempt_store: ToolAttemptStore | None) -> str:
     return "Tool execution evidence:\n" + "\n".join(parts)
 
 
-def _checkpoint_section(run: Run, run_store: RunStore | None) -> str:
+def _checkpoint_section(
+    run: Run,
+    run_store: RunStore | None,
+    info: CheckpointInfo | None,
+) -> str:
+    if info is not None:
+        parts: list[str] = []
+        if info.iteration is not None:
+            parts.append(f"last checkpoint at iteration {info.iteration}")
+        if info.side_effect_status:
+            parts.append(f"side-effect status: {info.side_effect_status}")
+        if not parts:
+            return ""
+        return "Recovery state: " + "; ".join(parts)
     if run_store is None:
         return ""
     try:
@@ -174,7 +230,7 @@ def _checkpoint_section(run: Run, run_store: RunStore | None) -> str:
     if not checkpoint:
         return ""
     state = checkpoint.get("state") or {}
-    parts: list[str] = []
+    parts = []
     iteration = state.get("iteration")
     if iteration is not None:
         parts.append(f"last checkpoint at iteration {iteration}")

@@ -17,6 +17,9 @@ from eurus.providers.transport import (
 USER_AGENT = f"eurus/{__version__}"
 KEPT_HEADERS = ("cf-ray", "server", "content-type")
 NON_SSE_LIMIT = 300
+KEEPALIVE_EXPIRY_SECONDS = 60.0
+MAX_CONNECTIONS = 16
+MAX_KEEPALIVE_CONNECTIONS = 8
 
 
 def user_agent_candidates(headers: Mapping[str, str]) -> tuple[str | None, ...]:
@@ -82,6 +85,11 @@ class HttpxTransport:
             client = httpx.AsyncClient(
                 timeout=httpx.Timeout(timeout, connect=15.0),
                 follow_redirects=False,
+                limits=httpx.Limits(
+                    max_connections=MAX_CONNECTIONS,
+                    max_keepalive_connections=MAX_KEEPALIVE_CONNECTIONS,
+                    keepalive_expiry=KEEPALIVE_EXPIRY_SECONDS,
+                ),
             )
         self._client = client
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
 import re
 import signal
 import time
@@ -26,10 +27,14 @@ from eurus.models import Message, ModelRef, ToolCall, Usage
 from eurus.providers.discovery import Discovery, discover
 from eurus.providers.factory import build_router
 from eurus.providers.policy import is_local_url
+from eurus.providers.router import Router
+from eurus.runtime import instrumentation
 from eurus.runtime.application import AgentRuntime
+from eurus.runtime.instrumentation import record, span
 from eurus.security.approval import SessionScopedApprover, approval_request
 from eurus.sessions import SessionStore
 from eurus.skills import list_skills
+from eurus.storage.database import Database
 from eurus.tools import Tool, ToolRegistry, default_registry
 from eurus.tui import appearance, themes
 from eurus.tui import prefs as view_prefs
@@ -63,6 +68,7 @@ class TurnStats:
     tool_calls: int = 0
     pending: int = 0
     spoke: bool = False
+    saw_text: bool = False
     usage: Usage = field(default_factory=Usage)
 
 
@@ -112,6 +118,13 @@ class InteractiveSession:
         self.session_approver = SessionScopedApprover(self._approve)
         self._runtime: AgentRuntime | None = None
         self._runtime_loop: asyncio.AbstractEventLoop | None = None
+        self._cached_router: Router | None = None
+        self._cached_agent: Agent | None = None
+        self._cached_signature: str | None = None
+        self._engine_database: Database | None = None
+        self._engine_stores: tuple[Any, Any, Any] | None = None
+        self._cached_checkpoint_store: CheckpointStore | None = None
+        self._cached_pricing: Any = None
         self._cancel: SigintCancel | None = None
         self._view: StreamView | None = None
         self._catalog: dict[str, Discovery] = {}
@@ -507,6 +520,7 @@ class InteractiveSession:
         self.session_id = str(selected["id"])
         self.usage = Usage()
         self.retry_prompt = ""
+        self._cached_agent = None
         self.renderer.system(f"Resumed: {selected['title']} ({len(loaded)} messages)")
 
     def _tools(self, _: str) -> None:
@@ -630,6 +644,7 @@ class InteractiveSession:
         turns = [index for index, message in enumerate(self.history) if message.role == "user"]
         if len(turns) > 1:
             self.history = self.history[turns[-1] :]
+        self._cached_agent = None
         count = len(self.history)
         self.renderer.system(f"Context compacted to the latest turn ({count} messages).")
 
@@ -642,6 +657,7 @@ class InteractiveSession:
         self.session_id = str(uuid.uuid4())
         self.usage = Usage()
         self.retry_prompt = ""
+        self._cached_agent = None
         self.renderer.clear()
         self.renderer.startup(self.config)
         self.renderer.system("Conversation cleared; project files unchanged.")
@@ -782,6 +798,81 @@ class InteractiveSession:
             self._runtime_loop = loop
         return self._runtime
 
+    def _runtime_signature(self) -> str:
+        return repr(
+            (
+                self.config.agent,
+                self.config.network,
+                self.config.learning,
+                self.config.memory,
+                self.config.sandbox,
+                self.config.tools,
+                self.config.auxiliary,
+                self.config.verification,
+                self.config.planning,
+                self.config.permissions,
+                self.config.browser,
+                self.config.pricing.updated_at,
+                tuple(self.config.providers),
+            )
+        )
+
+    def _invalidate_agent(self) -> None:
+        self._cached_agent = None
+
+    def _background_event(self, event: AgentEvent) -> None:
+        self.renderer.activity(event)
+
+    async def _prepare_runtime(self) -> tuple[Router, Agent]:
+        """Reuse the router/agent across turns; rebuild on config or history changes."""
+        signature = self._runtime_signature()
+        if self._cached_router is not None and signature != self._cached_signature:
+            stale_router, self._cached_router = self._cached_router, None
+            self._cached_agent = None
+            self._cached_pricing = None
+            await stale_router.aclose()
+        agent = self._cached_agent
+        if agent is None:
+            with span("tui.prepare_runtime"):
+                router = self._cached_router
+                if router is None:
+                    with span("build_router"):
+                        router = await asyncio.to_thread(build_router, self.config)
+                    self._cached_router = router
+                agent = await asyncio.to_thread(
+                    build_agent,
+                    self.config,
+                    router,
+                    registry=self.registry,
+                    approver=self.session_approver,
+                    lessons=True,
+                    learn=True,
+                    learn_background=True,
+                    skill_learning=self.config.learning.skills,
+                    background_event_sink=self._background_event,
+                )
+                agent.history.extend(self.history)
+                saved_summary = self.session_store.load_session_summary(self.session_id)
+                if saved_summary and agent.history:
+                    agent.history[0] = replace(
+                        agent.history[0],
+                        content=(
+                            f"{agent.history[0].content}\n\n"
+                            "Saved summary of this session "
+                            "(context only; verify details in history):\n"
+                            f"{saved_summary}"
+                        ),
+                    )
+            self._cached_agent = agent
+            self._cached_signature = signature
+        else:
+            usage = getattr(agent, "usage", None)
+            if usage is not None:
+                agent.usage = Usage()
+        if self._cached_router is None:
+            self._cached_router = await asyncio.to_thread(build_router, self.config)
+        return self._cached_router, agent
+
     def _engine_for_agent(self, agent: Agent) -> Any:
         from eurus.runtime.engine import AgentEngine
         from eurus.runtime.pricing import build_pricing_catalog
@@ -789,20 +880,32 @@ class InteractiveSession:
         from eurus.storage.runs import RunStore
         from eurus.storage.tool_attempts import ToolAttemptStore
 
-        database = paths.home_dir() / "sessions.sqlite3"
-        return AgentEngine(
-            agent,
-            run_store=RunStore(database),
-            event_store=EventStore(database),
-            attempt_store=ToolAttemptStore(database),
-            checkpoint_store=CheckpointStore(),
-            pricing=build_pricing_catalog(
+        if self._engine_database is None:
+            self._engine_database = Database(paths.home_dir() / "sessions.sqlite3")
+        if self._engine_stores is None:
+            self._engine_stores = (
+                RunStore(self._engine_database),
+                EventStore(self._engine_database),
+                ToolAttemptStore(self._engine_database),
+            )
+        if self._cached_checkpoint_store is None:
+            self._cached_checkpoint_store = CheckpointStore()
+        if self._cached_pricing is None:
+            self._cached_pricing = build_pricing_catalog(
                 {
                     "updated_at": self.config.pricing.updated_at,
                     "models": self.config.pricing.models,
                 },
                 home=paths.home_dir(),
-            ),
+            )
+        run_store, event_store, attempt_store = self._engine_stores
+        return AgentEngine(
+            agent,
+            run_store=run_store,
+            event_store=event_store,
+            attempt_store=attempt_store,
+            checkpoint_store=self._cached_checkpoint_store,
+            pricing=self._cached_pricing,
         )
 
     @staticmethod
@@ -815,7 +918,25 @@ class InteractiveSession:
             if runtime is not None:
                 await runtime.close()
         finally:
-            await self.mcp.close()
+            agent, self._cached_agent = self._cached_agent, None
+            if agent is not None:
+                drain = getattr(agent, "drain_background", None)
+                if callable(drain):
+                    try:
+                        await drain(timeout=5.0)
+                    except Exception:
+                        log.debug("background learning drain failed", exc_info=True)
+            router, self._cached_router = self._cached_router, None
+            try:
+                if router is not None:
+                    await router.aclose()
+            finally:
+                database, self._engine_database = self._engine_database, None
+                self._engine_stores = None
+                self._cached_pricing = None
+                if database is not None:
+                    database.close()
+                await self.mcp.close()
 
     async def _turn(self, prompt: str) -> None:
         started = time.monotonic()
@@ -829,49 +950,36 @@ class InteractiveSession:
                 self.renderer.status("Preparing agent and connecting tools…")
                 await asyncio.sleep(0)
                 try:
-                    router = await asyncio.to_thread(build_router, self.config)
-                    if not self._mcp_registered:
-                        enabled_mcp = [item for item in self.mcp.configs.values() if item.enabled]
-                        connect_timeout = sum(item.timeout_seconds for item in enabled_mcp) + 1.0
-                        await asyncio.wait_for(
-                            self.mcp.connect(), timeout=max(connect_timeout, 1.0)
+                    with span("tui.turn"):
+                        router, agent = await self._prepare_runtime()
+                        if not self._mcp_registered:
+                            enabled_mcp = [
+                                item for item in self.mcp.configs.values() if item.enabled
+                            ]
+                            connect_timeout = (
+                                sum(item.timeout_seconds for item in enabled_mcp) + 1.0
+                            )
+                            await asyncio.wait_for(
+                                self.mcp.connect(), timeout=max(connect_timeout, 1.0)
+                            )
+                            self.mcp.register_tools(self.registry)
+                            self._mcp_registered = True
+                        async for event in self._runtime_for_turn().run_agent(
+                            self.session_id, agent, prompt, persist=False
+                        ):
+                            if event.kind == "text" and stats.spoke is False and not stats.saw_text:
+                                stats.saw_text = True
+                                record("tui.ttft", time.monotonic() - started)
+                            self._consume(event, view, stats)
+                        self._flush(view, stats)
+                        self.history = agent.history[1:]
+                        self.session_store.save_messages(self.session_id, agent.history)
+                        self.usage += stats.usage
+                        self.retry_prompt = ""
+                        self._set_state(AgentState.IDLE)
+                        self.renderer.turn_summary(
+                            time.monotonic() - started, stats.tool_calls, stats.usage
                         )
-                        self.mcp.register_tools(self.registry)
-                        self._mcp_registered = True
-                    agent = await asyncio.to_thread(
-                        build_agent,
-                        self.config,
-                        router,
-                        registry=self.registry,
-                        approver=self.session_approver,
-                        lessons=True,
-                        learn=True,
-                    )
-                    agent.history.extend(self.history)
-                    saved_summary = self.session_store.load_session_summary(self.session_id)
-                    if saved_summary and agent.history:
-                        agent.history[0] = replace(
-                            agent.history[0],
-                            content=(
-                                f"{agent.history[0].content}\n\n"
-                                "Saved summary of this session "
-                                "(context only; verify details in history):\n"
-                                f"{saved_summary}"
-                            ),
-                        )
-                    async for event in self._runtime_for_turn().run_agent(
-                        self.session_id, agent, prompt, persist=False
-                    ):
-                        self._consume(event, view, stats)
-                    self._flush(view, stats)
-                    self.history = agent.history[1:]
-                    self.session_store.save_messages(self.session_id, agent.history)
-                    self.usage += stats.usage
-                    self.retry_prompt = ""
-                    self._set_state(AgentState.IDLE)
-                    self.renderer.turn_summary(
-                        time.monotonic() - started, stats.tool_calls, stats.usage
-                    )
                 finally:
                     self._flush(view, stats)
                     self._view = None
@@ -889,8 +997,17 @@ class InteractiveSession:
             self.renderer.error(f"Unexpected error: {type(exc).__name__}: {exc}")
         finally:
             self._view = None
-            if router is not None:
-                await router.aclose()
+            record("tui.turn_total", time.monotonic() - started)
+            self._dump_timing()
+
+    def _dump_timing(self) -> None:
+        dump_path = os.environ.get("EURUS_TIMING_DUMP", "").strip()
+        if not dump_path:
+            return
+        try:
+            instrumentation.dump(dump_path)
+        except OSError:
+            log.debug("timing dump failed", exc_info=True)
 
     async def _approve(self, call: ToolCall, tool: Tool) -> bool:
         request = approval_request(call, tool)

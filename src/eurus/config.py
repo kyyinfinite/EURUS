@@ -55,6 +55,10 @@ ENV_OVERRIDES: tuple[tuple[str, str, str, type[Any]], ...] = (
     ("EURUS_TIMEOUT", "network", "timeout_seconds", float),
     ("EURUS_MAX_RETRIES", "network", "max_retries", int),
     ("EURUS_LOCAL_ONLY", "network", "local_only", bool),
+    ("EURUS_COOLDOWN", "network", "cooldown_seconds", float),
+    ("EURUS_MAX_COOLDOWN", "network", "max_cooldown_seconds", float),
+    ("EURUS_RETRY_JITTER", "network", "retry_jitter", float),
+    ("EURUS_FIRST_TOKEN", "network", "first_token_seconds", float),
 )
 
 SAMPLE_CONFIG = """[agent]
@@ -74,6 +78,8 @@ fallback = []
 mode = "ask"
 lessons_in_prompt = 5
 max_lessons = 500
+# Draft reusable skills after completed tasks (LLM call after each answer).
+skills = false
 
 [permissions]
 mode = "ask"
@@ -88,6 +94,10 @@ json = false
 timeout_seconds = 120.0
 max_retries = 3
 local_only = false
+cooldown_seconds = 30.0
+max_cooldown_seconds = 300.0
+retry_jitter = 0.0
+first_token_seconds = 0.0
 
 [tools]
 max_output_chars = 20000
@@ -155,6 +165,10 @@ class NetworkConfig:
     timeout_seconds: float = 120.0
     max_retries: int = 3
     local_only: bool = False
+    cooldown_seconds: float = 30.0
+    max_cooldown_seconds: float = 300.0
+    retry_jitter: float = 0.0
+    first_token_seconds: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +195,7 @@ class LearningConfig:
     mode: str = "ask"
     lessons_in_prompt: int = 5
     max_lessons: int = 500
+    skills: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -474,15 +489,55 @@ def _build_logging(raw: Mapping[str, Any]) -> LoggingConfig:
 
 def _build_network(raw: Mapping[str, Any]) -> NetworkConfig:
     section = _section(raw, "network")
-    _check_keys(section, {"timeout_seconds", "max_retries", "local_only"}, "network")
+    _check_keys(
+        section,
+        {
+            "timeout_seconds",
+            "max_retries",
+            "local_only",
+            "cooldown_seconds",
+            "max_cooldown_seconds",
+            "retry_jitter",
+            "first_token_seconds",
+        },
+        "network",
+    )
     timeout = _get(section, "timeout_seconds", float, 120.0, "network")
     retries = _get(section, "max_retries", int, 3, "network")
     local_only = _get(section, "local_only", bool, False, "network")
+    cooldown = _get(section, "cooldown_seconds", float, 30.0, "network")
+    max_cooldown = _get(section, "max_cooldown_seconds", float, 300.0, "network")
+    jitter = _get(section, "retry_jitter", float, 0.0, "network")
+    first_token: float | None = None
+    if "first_token_seconds" in section:
+        raw_first_token = _get(section, "first_token_seconds", float, 0.0, "network")
+        if raw_first_token == 0.0:
+            first_token = None
+        elif 1.0 <= raw_first_token <= 600.0:
+            first_token = raw_first_token
+        else:
+            raise ConfigError("network.first_token_seconds must be 0 or between 1 and 600")
     if not 1.0 <= timeout <= 600.0:
         raise ConfigError("network.timeout_seconds must be between 1 and 600")
     if not 0 <= retries <= 10:
         raise ConfigError("network.max_retries must be between 0 and 10")
-    return NetworkConfig(timeout_seconds=timeout, max_retries=retries, local_only=local_only)
+    if not 0.0 <= cooldown <= 3600.0:
+        raise ConfigError("network.cooldown_seconds must be between 0 and 3600")
+    if not 0.0 <= max_cooldown <= 86400.0:
+        raise ConfigError("network.max_cooldown_seconds must be between 0 and 86400")
+    if cooldown > max_cooldown:
+        raise ConfigError("network.cooldown_seconds cannot exceed network.max_cooldown_seconds")
+    if not 0.0 <= jitter <= 1.0:
+        raise ConfigError("network.retry_jitter must be between 0 and 1")
+    return NetworkConfig(
+        timeout_seconds=timeout,
+        max_retries=retries,
+        local_only=local_only,
+        cooldown_seconds=cooldown,
+        max_cooldown_seconds=max_cooldown,
+        retry_jitter=jitter,
+        first_token_seconds=first_token,
+    )
 
 
 def _build_tools(raw: Mapping[str, Any]) -> ToolsConfig:
@@ -502,17 +557,20 @@ def _build_tools(raw: Mapping[str, Any]) -> ToolsConfig:
 
 def _build_learning(raw: Mapping[str, Any]) -> LearningConfig:
     section = _section(raw, "learning")
-    _check_keys(section, {"mode", "lessons_in_prompt", "max_lessons"}, "learning")
+    _check_keys(section, {"mode", "lessons_in_prompt", "max_lessons", "skills"}, "learning")
     mode = _get(section, "mode", str, "ask", "learning").strip().lower()
     in_prompt = _get(section, "lessons_in_prompt", int, 5, "learning")
     maximum = _get(section, "max_lessons", int, 500, "learning")
+    skills = _get(section, "skills", bool, False, "learning")
     if mode not in LEARNING_MODES:
         raise ConfigError(f"learning.mode must be one of: {', '.join(LEARNING_MODES)}")
     if not 0 <= in_prompt <= 20:
         raise ConfigError("learning.lessons_in_prompt must be between 0 and 20")
     if not 10 <= maximum <= 10000:
         raise ConfigError("learning.max_lessons must be between 10 and 10000")
-    return LearningConfig(mode=mode, lessons_in_prompt=in_prompt, max_lessons=maximum)
+    return LearningConfig(
+        mode=mode, lessons_in_prompt=in_prompt, max_lessons=maximum, skills=skills
+    )
 
 
 def _build_memory(raw: Mapping[str, Any]) -> MemoryConfig:

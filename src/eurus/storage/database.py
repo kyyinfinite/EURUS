@@ -4,17 +4,30 @@ import logging
 import os
 import sqlite3
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import TypeAlias
 
+from eurus.runtime import instrumentation
 from eurus.storage.migrations import apply_migrations
 from eurus.storage.sqlite import configure
 
 DatabasePath: TypeAlias = str | Path
 
 log = logging.getLogger(__name__)
+
+
+class _StatementCounter:
+    def __init__(self) -> None:
+        self.count = 0
+
+    def __call__(self, statement: str) -> None:
+        head = statement.lstrip()[:6].upper()
+        if head.startswith("BEGIN") or head.startswith("COMMIT"):
+            return
+        self.count += 1
 
 
 class Database:
@@ -62,6 +75,11 @@ class Database:
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
         connection = self.connect()
+        timed = instrumentation.enabled()
+        if timed:
+            started = time.perf_counter()
+            counter = _StatementCounter()
+            connection.set_trace_callback(counter)
         try:
             yield connection
             connection.commit()
@@ -70,6 +88,9 @@ class Database:
                 connection.rollback()
             raise
         finally:
+            if timed:
+                connection.set_trace_callback(None)
+                instrumentation.record_sql(counter.count, time.perf_counter() - started)
             self._release(connection)
 
     def close(self) -> None:

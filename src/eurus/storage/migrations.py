@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import UTC, datetime
 
-LATEST_SCHEMA_VERSION = 4
+LATEST_SCHEMA_VERSION = 5
 
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
     1: (
@@ -104,6 +104,12 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
         )""",
         "CREATE INDEX eurus_tool_attempts_run ON eurus_tool_attempts(run_id, created_at)",
         "CREATE INDEX eurus_tool_attempts_uncertain ON eurus_tool_attempts(uncertain, call_key)",
+    ),
+    5: (
+        "ALTER TABLE eurus_run_checkpoints ADD COLUMN iteration INTEGER",
+        "ALTER TABLE eurus_run_checkpoints ADD COLUMN side_effect_status TEXT",
+        "CREATE INDEX eurus_run_checkpoints_lookup "
+        "ON eurus_run_checkpoints(run_id, checkpoint_type, checkpoint_version)",
     ),
 }
 

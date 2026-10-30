@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
+import time
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
@@ -83,15 +85,25 @@ class RetryPolicy:
     base_delay: float = 0.5
     max_delay: float = 8.0
     max_retry_after: float = 30.0
+    jitter: float = 0.0
+    random_fn: Callable[[], float] = random.random
+    max_total_seconds: float | None = None
 
     def __post_init__(self) -> None:
         if not 0 <= self.max_retries <= MAX_RETRY_LIMIT:
             raise ValueError(f"max_retries must be between 0 and {MAX_RETRY_LIMIT}")
         if min(self.base_delay, self.max_delay, self.max_retry_after) < 0:
             raise ValueError("retry delays cannot be negative")
+        if not 0 <= self.jitter <= 1:
+            raise ValueError("jitter must be between 0 and 1")
+        if self.max_total_seconds is not None and self.max_total_seconds <= 0:
+            raise ValueError("max_total_seconds must be positive")
 
     def delay(self, attempt: int, retry_after: float | None) -> float:
         value = min(self.max_delay, self.base_delay * (2 ** min(max(attempt, 0), MAX_RETRY_LIMIT)))
+        if self.jitter > 0:
+            spread = value * self.jitter
+            value = min(self.max_delay, max(0.0, value - spread + 2 * spread * self.random_fn()))
         if retry_after is not None:
             value = max(value, min(retry_after, self.max_retry_after))
         return float(value)
@@ -154,12 +166,14 @@ class Provider(ABC):
         transport: HttpTransport,
         retry: RetryPolicy | None = None,
         sleep: Sleep | None = None,
+        clock: Callable[[], float] | None = None,
     ) -> None:
         self.spec = spec
         self._api_key = api_key
         self.transport = transport
         self.retry = retry or RetryPolicy()
         self._sleep: Sleep = sleep or asyncio.sleep
+        self._clock: Callable[[], float] = clock or time.monotonic
 
     @property
     def name(self) -> str:
@@ -182,19 +196,30 @@ class Provider(ABC):
             )
         return self._api_key
 
+    def _within_budget(self, started: float, delay: float) -> bool:
+        budget = self.retry.max_total_seconds
+        if budget is None:
+            return True
+        return self._clock() - started + delay <= budget
+
     async def chat(self, request: ChatRequest) -> ChatResponse:
         attempt = 0
+        started = self._clock()
         while True:
             try:
                 return await self._chat(request)
             except ProviderError as exc:
                 if not exc.retryable or attempt >= self.retry.max_retries:
                     raise
-                await self._sleep(self.retry.delay(attempt, exc.retry_after))
+                delay = self.retry.delay(attempt, exc.retry_after)
+                if not self._within_budget(started, delay):
+                    raise
+                await self._sleep(delay)
                 attempt += 1
 
     async def stream(self, request: ChatRequest) -> AsyncIterator[StreamEvent]:
         attempt = 0
+        started_at = self._clock()
         while True:
             started = False
             try:
@@ -206,7 +231,10 @@ class Provider(ABC):
             except ProviderError as exc:
                 if started or not exc.retryable or attempt >= self.retry.max_retries:
                     raise
-                await self._sleep(self.retry.delay(attempt, exc.retry_after))
+                delay = self.retry.delay(attempt, exc.retry_after)
+                if not self._within_budget(started_at, delay):
+                    raise
+                await self._sleep(delay)
                 attempt += 1
 
     @abstractmethod

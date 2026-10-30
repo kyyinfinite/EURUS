@@ -216,6 +216,9 @@ iteration_budget = 100
 timeout_seconds = 120.0
 max_retries = 3
 local_only = false
+cooldown_seconds = 30.0
+retry_jitter = 0.0
+first_token_seconds = 0
 ```
 
 Configuration precedence, provider protocols, SDK extras, and troubleshooting are documented in [Provider Configuration](docs/PROVIDERS.md).

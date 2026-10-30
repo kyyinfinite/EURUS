@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
@@ -29,6 +30,7 @@ from eurus.models import Message, ToolCall, ToolResult, Usage
 from eurus.providers.base import ToolSpec
 from eurus.providers.router import Router
 from eurus.runtime.contracts import LoopDecision, decision_for_stop_reason
+from eurus.runtime.instrumentation import record, span
 from eurus.tools.base import Tool, ToolContext, ToolRegistry
 from eurus.tools.boundary import ToolExecutionBoundary, call_key
 
@@ -160,6 +162,8 @@ class Agent:
         context_mode: str = "default",
         event_recorder: Callable[[AgentEvent], object] | None = None,
         planner: PlanSource | None = None,
+        learn_in_background: bool = False,
+        background_event_sink: Callable[[AgentEvent], object] | None = None,
         max_model_calls: int = MAX_MODEL_CALLS,
         deadline_at: datetime | None = None,
         model_retry_limit: int = 1,
@@ -200,6 +204,10 @@ class Agent:
             raise ValueError("context_mode must be default or gateway")
         self.context_mode = context_mode
         self.event_recorder = event_recorder
+        self.learn_in_background = learn_in_background
+        self.background_event_sink = background_event_sink
+        self._background_tasks: set[asyncio.Task[None]] = set()
+        self._learn_approval_lock = asyncio.Lock()
         self.context_engine = context_engine or ExtractiveContextEngine(keep_recent=20)
         self.context_store = context_store
         self.session_id = session_id
@@ -281,6 +289,55 @@ class Agent:
     def interrupt(self) -> None:
         self._interrupt_event.set()
 
+    def _schedule_learn(self, text: str, transcript: tuple[Message, ...]) -> None:
+        task = asyncio.create_task(self._learn_background(text, transcript))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_done)
+
+    def _background_done(self, task: asyncio.Task[None]) -> None:
+        self._background_tasks.discard(task)
+        if not task.cancelled():
+            exc = task.exception()
+            if exc is not None:
+                log.debug("background learning failed", exc_info=exc)
+
+    async def _learn_background(self, text: str, transcript: tuple[Message, ...]) -> None:
+        approver = self._serialized_approver() if self.approver is not None else None
+        async for event in self._learn(text, 0, transcript=transcript, approver=approver):
+            sink = self.background_event_sink
+            if sink is None:
+                continue
+            outcome = sink(event)
+            if inspect.isawaitable(outcome):
+                await outcome
+
+    def _serialized_approver(self) -> Approver:
+        """Queue background lesson approvals so they never overlap the live prompt."""
+        base = self.approver
+        assert base is not None
+        lock = self._learn_approval_lock
+
+        async def ask(call: ToolCall, tool: Tool) -> bool:
+            async with lock:
+                return await base(call, tool)
+
+        return ask
+
+    async def drain_background(self, timeout: float | None = None) -> None:
+        """Await (or cancel) pending post-answer learning tasks; no orphans."""
+        tasks = [task for task in self._background_tasks if not task.done()]
+        if not tasks:
+            return
+        try:
+            if timeout is not None:
+                await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout)
+            else:
+                await asyncio.gather(*tasks, return_exceptions=True)
+        except TimeoutError:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
     def set_run_state_provider(self, provider: Callable[[], str] | None) -> None:
         self._run_state_provider = provider
 
@@ -343,7 +400,7 @@ class Agent:
             self._close_task_state(close_status)
         summary = text if text is not None else self._summarize_work(mark)
         yield AgentEvent.finished(reason, self.usage, summary)
-        async for lesson_event in self._learn(objective, mark):
+        async for lesson_event in self._learn_tail(objective, mark):
             yield lesson_event
 
     async def _run_events(self, text: str) -> AsyncIterator[AgentEvent]:
@@ -516,8 +573,9 @@ class Agent:
     ) -> AsyncIterator[AgentEvent]:
         """Named step: execute tool calls, evaluate results and handle stalls."""
         self._iteration_results = []
-        async for tool_event in self._run_tools(calls):
-            yield tool_event
+        with span("tools"):
+            async for tool_event in self._run_tools(calls):
+                yield tool_event
         results = [
             event.tool_result for event in self._iteration_results if event.tool_result is not None
         ]
@@ -742,7 +800,7 @@ class Agent:
             if reason == "completed":
                 self._close_task_state("completed")
                 self._learn_memory(objective)
-            async for lesson_event in self._learn(objective, mark):
+            async for lesson_event in self._learn_tail(objective, mark):
                 yield lesson_event
             return
         try:
@@ -752,7 +810,7 @@ class Agent:
             self._record_decision(LoopDecision.COMPLETED_UNVERIFIED)
             self._close_task_state("completed")
             yield AgentEvent.finished("completed", self.usage)
-            async for lesson_event in self._learn(objective, mark):
+            async for lesson_event in self._learn_tail(objective, mark):
                 yield lesson_event
             return
         if not getattr(outcome, "applies", True):
@@ -760,7 +818,7 @@ class Agent:
             self._close_task_state("completed")
             yield AgentEvent.finished("completed", self.usage)
             self._learn_memory(objective)
-            async for lesson_event in self._learn(objective, mark):
+            async for lesson_event in self._learn_tail(objective, mark):
                 yield lesson_event
             return
         if outcome.passed:
@@ -768,7 +826,7 @@ class Agent:
             self._close_task_state("completed")
             yield AgentEvent.finished("completed", self.usage)
             self._learn_memory(objective)
-            async for lesson_event in self._learn(objective, mark):
+            async for lesson_event in self._learn_tail(objective, mark):
                 yield lesson_event
             return
         if self._completion_retries < COMPLETION_RETRY_LIMIT:
@@ -789,7 +847,7 @@ class Agent:
         self._close_task_state("failed")
         self._record_decision(LoopDecision.FAILED)
         yield AgentEvent.finished("verification_failed", self.usage, self._summarize_work(mark))
-        async for lesson_event in self._learn(objective, mark):
+        async for lesson_event in self._learn_tail(objective, mark):
             yield lesson_event
 
     def _render_plan(self, plan: TaskPlan) -> str:
@@ -834,7 +892,11 @@ class Agent:
                 return
             self._model_calls_used += 1
             text_queue: asyncio.Queue[str] = asyncio.Queue()
-            request_task = asyncio.create_task(self._request_model(messages, specs, text_queue))
+            stream_started = time.perf_counter()
+            first_token: list[float] = []
+            request_task = asyncio.create_task(
+                self._request_model(messages, specs, text_queue, first_token)
+            )
             text_task: asyncio.Task[str] | None = None
             try:
                 while True:
@@ -890,6 +952,10 @@ class Agent:
                     )
                     return
                 continue
+            finished_at = time.perf_counter()
+            if first_token:
+                record("ttft", first_token[0] - stream_started, step=step)
+            record("stream_total", finished_at - stream_started, step=step)
             holder["result"] = result
             yield AgentEvent.model_completed(step, result[3], result[2])
             return
@@ -899,31 +965,39 @@ class Agent:
         messages: Sequence[Message],
         specs: Sequence[ToolSpec],
         text_queue: asyncio.Queue[str],
+        first_token: list[float] | None = None,
     ) -> tuple[list[str], list[ToolCall], str, Usage]:
         async def collect() -> tuple[list[str], list[ToolCall], str, Usage]:
             parts: list[str] = []
             calls: list[ToolCall] = []
             finish = "stop"
             usage = Usage()
-            if self.stream:
-                async for event in self.router.stream(messages, tools=specs):
-                    if event.kind == "text":
-                        parts.append(event.text)
-                        text_queue.put_nowait(event.text)
-                    elif event.kind == "tool_call" and event.tool_call is not None:
-                        calls.append(event.tool_call)
-                    elif event.kind == "usage" and event.usage is not None:
-                        usage += event.usage
-                    elif event.kind == "done":
-                        finish = event.finish_reason or finish
-            else:
-                response = await self.router.chat(messages, tools=specs)
-                if response.message.content:
-                    parts.append(response.message.content)
-                    text_queue.put_nowait(response.message.content)
-                calls.extend(response.message.tool_calls)
-                finish = response.finish_reason
-                usage += response.usage
+            with span("provider_stream"):
+                if self.stream:
+                    async for event in self.router.stream(messages, tools=specs):
+                        if event.kind == "text":
+                            if not parts and first_token is not None and not first_token:
+                                first_token.append(time.perf_counter())
+                            parts.append(event.text)
+                            text_queue.put_nowait(event.text)
+                        elif event.kind == "tool_call" and event.tool_call is not None:
+                            if first_token is not None and not first_token:
+                                first_token.append(time.perf_counter())
+                            calls.append(event.tool_call)
+                        elif event.kind == "usage" and event.usage is not None:
+                            usage += event.usage
+                        elif event.kind == "done":
+                            finish = event.finish_reason or finish
+                else:
+                    response = await self.router.chat(messages, tools=specs)
+                    if first_token is not None and not first_token:
+                        first_token.append(time.perf_counter())
+                    if response.message.content:
+                        parts.append(response.message.content)
+                        text_queue.put_nowait(response.message.content)
+                    calls.extend(response.message.tool_calls)
+                    finish = response.finish_reason
+                    usage += response.usage
             return parts, calls, finish, usage
 
         timeout = self.request_timeout
@@ -993,35 +1067,40 @@ class Agent:
     async def _preflight_context(self) -> None:
         if self._window is None:
             return
-        raw = self._prompt(fit=False)
-        ratio = self._window.cost(raw) / self._window.max_tokens
-        threshold = 0.85 if self.context_mode == "gateway" else 0.50
-        if ratio <= threshold:
-            return
-        if self.flush_memory is not None:
-            flushed = self.flush_memory()
-            if inspect.isawaitable(flushed):
-                await flushed
-        compacted = await self.context_engine.compact(
-            raw,
-            max_tokens=self._window.max_tokens,
-            token_counter=self._window.token_counter,
-        )
-        self.history = [
-            message
-            for message in compacted.messages
-            if message.role != "system"
-            or message.content.startswith("<eurus-tier:stable>")
-            or message.content.startswith("Earlier context summary:")
-        ]
-        if self.context_store is not None and self.session_id:
-            child_id = f"{self.session_id}:compact:{uuid.uuid4().hex[:12]}"
-            save_lineage = getattr(self.context_store, "save_session_lineage", None)
-            if callable(save_lineage):
-                save_lineage(self.session_id, child_id, "context_compaction", compacted.summary)
-            self.session_id = child_id
+        with span("preflight_context"):
+            raw = self._prompt(fit=False)
+            ratio = self._window.cost(raw) / self._window.max_tokens
+            threshold = 0.85 if self.context_mode == "gateway" else 0.50
+            if ratio <= threshold:
+                return
+            if self.flush_memory is not None:
+                flushed = self.flush_memory()
+                if inspect.isawaitable(flushed):
+                    await flushed
+            compacted = await self.context_engine.compact(
+                raw,
+                max_tokens=self._window.max_tokens,
+                token_counter=self._window.token_counter,
+            )
+            self.history = [
+                message
+                for message in compacted.messages
+                if message.role != "system"
+                or message.content.startswith("<eurus-tier:stable>")
+                or message.content.startswith("Earlier context summary:")
+            ]
+            if self.context_store is not None and self.session_id:
+                child_id = f"{self.session_id}:compact:{uuid.uuid4().hex[:12]}"
+                save_lineage = getattr(self.context_store, "save_session_lineage", None)
+                if callable(save_lineage):
+                    save_lineage(self.session_id, child_id, "context_compaction", compacted.summary)
+                self.session_id = child_id
 
     def _prompt(self, *, fit: bool = True) -> list[Message]:
+        with span("build_prompt"):
+            return self._build_prompt(fit=fit)
+
+    def _build_prompt(self, *, fit: bool) -> list[Message]:
         history = list(self.history)
         volatile = self._volatile_prompt
         if self._active_plan is not None:
@@ -1040,27 +1119,43 @@ class Agent:
         if self._active_lessons:
             notes = "\n".join(f"- {item}" for item in self._active_lessons)
             volatile = f"{volatile}\n\n{LESSON_NOTE}\n{notes}".strip()
-        insert_at = 1
         if self._context_prompt:
             history.insert(
-                insert_at,
+                1,
                 Message.system(
                     f"<eurus-tier:context>\n{self._context_prompt}\n</eurus-tier:context>"
                 ),
             )
-            insert_at += 1
         if volatile:
-            history.insert(
-                insert_at,
-                Message.system(f"<eurus-tier:volatile>\n{volatile}\n</eurus-tier:volatile>"),
-            )
+            # The volatile tier is appended AFTER the history so the system +
+            # context + history prefix stays byte-identical across steps and
+            # provider-side prompt caches keep hitting.
+            tail = f"<eurus-tier:volatile>\n{volatile}\n</eurus-tier:volatile>"
+            history.append(Message.user(tail))
         return self._window.fit(history) if fit and self._window else history
 
-    async def _learn(self, text: str, mark: int) -> AsyncIterator[AgentEvent]:
-        transcript = self.history[mark:]
+    async def _learn_tail(self, text: str, mark: int) -> AsyncIterator[AgentEvent]:
+        if self.learn_in_background:
+            self._schedule_learn(text, tuple(self.history[mark:]))
+            return
+        async for lesson_event in self._learn(text, mark):
+            yield lesson_event
+
+    async def _learn(
+        self,
+        text: str,
+        mark: int,
+        *,
+        transcript: Sequence[Message] | None = None,
+        approver: Approver | None = None,
+    ) -> AsyncIterator[AgentEvent]:
+        messages = self.history[mark:] if transcript is None else transcript
         if self.learner is not None:
             try:
-                saved = await self.learner.learn(text, transcript, self.approver)
+                with span("learn.reflect"):
+                    saved = await self.learner.learn(
+                        text, messages, approver if approver is not None else self.approver
+                    )
             except Exception:
                 log.debug("reflection failed", exc_info=True)
                 saved = []
@@ -1068,7 +1163,8 @@ class Agent:
                 yield AgentEvent.lesson_saved(lesson)
         if self.skill_learner is not None:
             try:
-                draft = await self.skill_learner.draft(text, transcript)
+                with span("learn.skill"):
+                    draft = await self.skill_learner.draft(text, messages)
             except Exception:
                 log.debug("skill drafting failed", exc_info=True)
                 draft = None

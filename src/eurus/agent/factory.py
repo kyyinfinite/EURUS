@@ -14,7 +14,7 @@ from eurus.agent.prompt import build_system_prompt_tiers
 from eurus.agent.structured_planner import StructuredPlanner
 from eurus.agent.team_tools import document_team_tools
 from eurus.agent.verification import RuntimeVerificationService
-from eurus.coding.project_index import render_project_index
+from eurus.coding.project_index import render_project_index_cached
 from eurus.config import Config
 from eurus.execution.host import HostSandbox
 from eurus.execution.sandbox import ContainerSandbox, Sandbox
@@ -23,6 +23,7 @@ from eurus.learning.skills import SkillLearner
 from eurus.memory.manager import MemoryManager, PromptMemory
 from eurus.providers.factory import build_auxiliary_router
 from eurus.providers.router import Router
+from eurus.runtime.instrumentation import span
 from eurus.skills.tools import skill_tools
 from eurus.tools.base import ToolContext, ToolRegistry
 from eurus.tools.builtin import default_registry
@@ -40,6 +41,9 @@ def build_agent(
     shell: bool = True,
     lessons: bool = False,
     learn: bool = False,
+    learn_background: bool = False,
+    skill_learning: bool | None = None,
+    background_event_sink: Callable[[AgentEvent], object] | None = None,
     event_recorder: Callable[[AgentEvent], object] | None = None,
     verify: bool | None = None,
     plan: bool | None = None,
@@ -91,12 +95,19 @@ def build_agent(
         max_lessons=settings.max_lessons,
     )
     reflect = learn and settings.mode != "off"
-    stable_prompt, context_prompt, volatile_prompt = build_system_prompt_tiers(
-        root, config.agent.system_prompt
+    skills_on = (
+        learn
+        and settings.mode != "off"
+        and (skill_learning if skill_learning is not None else True)
     )
+    with span("build_agent.render_system_tiers"):
+        stable_prompt, context_prompt, volatile_prompt = build_system_prompt_tiers(
+            root, config.agent.system_prompt
+        )
     if root.is_dir():
         try:
-            project_context = render_project_index(root)
+            with span("render_project_index"):
+                project_context = render_project_index_cached(root)
         except (OSError, ValueError):
             project_context = ""
         if project_context and len(project_context) <= 6_000:
@@ -133,7 +144,9 @@ def build_agent(
         ),
         memory_scope=str(root),
         learner=Reflector(router, store, settings.mode) if reflect else None,
-        skill_learner=SkillLearner(auxiliary_router or router) if learn else None,
+        skill_learner=SkillLearner(auxiliary_router or router) if skills_on else None,
+        learn_in_background=learn_background,
+        background_event_sink=background_event_sink,
         event_recorder=event_recorder,
     )
     verification_on = config.verification.enabled if verify is None else verify

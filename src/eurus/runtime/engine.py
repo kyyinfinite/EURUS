@@ -7,7 +7,7 @@ import logging
 from collections import deque
 from collections.abc import Awaitable, Callable, Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
@@ -19,9 +19,14 @@ from eurus.coding.checkpoint import CheckpointStore
 from eurus.runtime.budgets import BudgetSpec, BudgetTracker
 from eurus.runtime.cancellation import CancellationToken
 from eurus.runtime.contracts import LoopDecision, VerificationOutcome, VerificationStatus
+from eurus.runtime.instrumentation import span
 from eurus.runtime.models import Run, RunStatus, RuntimeEvent
 from eurus.runtime.pricing import PricingCatalog
-from eurus.runtime.run_state import render_run_state
+from eurus.runtime.run_state import (
+    AttemptEvidence,
+    CheckpointInfo,
+    render_run_state,
+)
 from eurus.runtime.state_machine import transition_run
 from eurus.runtime.token_governor import TokenGovernor
 from eurus.security.redaction import redact_text, summarize_arguments
@@ -37,6 +42,8 @@ log = logging.getLogger(__name__)
 MAX_CHECKPOINT_HISTORY_MESSAGES = 200
 DEFAULT_MAX_AGENT_EVENTS = 2000
 DEFAULT_MAX_RUNTIME_EVENTS = 5000
+DEFAULT_CHECKPOINT_INTERVAL_STEPS = 4
+DEFAULT_CHECKPOINT_KEEP = 10
 
 
 def _remove_attr(agent: object, name: str) -> None:
@@ -61,6 +68,11 @@ class _RunFlow:
     budget_stop_requested: bool = False
     steps_since_checkpoint: int = 0
     plan_sequence: int = 0
+    checkpoint_iteration: int | None = None
+    side_effect_status: str = "settled"
+    uncertain_mutation: bool = False
+    attempt_failures: list[tuple[str, str]] = field(default_factory=list)
+    run_state_cache: str | None = None
 
 
 _RecordEvent = Callable[..., None]
@@ -111,11 +123,12 @@ class AgentEngine:
         run_store: RunStore | None = None,
         event_store: EventStore | None = None,
         attempt_store: ToolAttemptStore | None = None,
-        checkpoint_interval_steps: int = 1,
+        checkpoint_interval_steps: int = DEFAULT_CHECKPOINT_INTERVAL_STEPS,
         pricing: PricingCatalog | None = None,
         max_agent_events: int = DEFAULT_MAX_AGENT_EVENTS,
         max_runtime_events: int = DEFAULT_MAX_RUNTIME_EVENTS,
         checkpoint_store: CheckpointStore | None = None,
+        checkpoint_keep: int | None = DEFAULT_CHECKPOINT_KEEP,
     ) -> None:
         self.agent = agent
         self.verifier = verifier
@@ -129,6 +142,9 @@ class AgentEngine:
         if checkpoint_interval_steps < 1:
             raise ValueError("checkpoint_interval_steps must be at least 1")
         self.checkpoint_interval_steps = checkpoint_interval_steps
+        if checkpoint_keep is not None and checkpoint_keep < 1:
+            raise ValueError("checkpoint_keep must be at least 1 when set")
+        self.checkpoint_keep = checkpoint_keep
         if max_agent_events < 1:
             raise ValueError("max_agent_events must be at least 1")
         if max_runtime_events < 1:
@@ -202,23 +218,49 @@ class AgentEngine:
 
         boundary.event_recorder = forward
 
-    def _attach_run_state_provider(self, run: Run, spec: BudgetSpec) -> None:
+    def _attach_run_state_provider(self, run: Run, spec: BudgetSpec, flow: _RunFlow) -> None:
         if not hasattr(self.agent, "set_run_state_provider"):
             return
         agent = self.agent
-        run_state_render = render_run_state
 
         def state_line() -> str:
-            return run_state_render(
+            cached = flow.run_state_cache
+            if cached is not None:
+                return cached
+            text = render_run_state(
                 run,
                 spec,
                 agent,
-                attempt_store=self.attempt_store,
-                run_store=self.run_store,
                 tracker=agent.runtime_budget_tracker,
+                attempt_evidence=AttemptEvidence(
+                    uncertain_mutation=flow.uncertain_mutation,
+                    failures=tuple(flow.attempt_failures),
+                ),
+                checkpoint_info=CheckpointInfo(
+                    iteration=flow.checkpoint_iteration,
+                    side_effect_status=flow.side_effect_status,
+                ),
             )
+            flow.run_state_cache = text
+            return text
 
         agent.set_run_state_provider(state_line)
+
+    def _seed_attempt_evidence(self, run_id: str, flow: _RunFlow) -> None:
+        """One-time read so resumed runs show evidence from a previous execution."""
+        if self.attempt_store is None:
+            return
+        try:
+            if self.attempt_store.has_uncertain_mutation(run_id):
+                flow.uncertain_mutation = True
+            rows = self.attempt_store.list_for_run(run_id, limit=12)
+            flow.attempt_failures = [
+                (str(item.get("tool_name", "unknown")), str(item.get("status")))
+                for item in rows
+                if item.get("status") in {"failed", "timeout", "cancelled", "uncertain"}
+            ]
+        except Exception:
+            log.debug("attempt evidence seed failed", exc_info=True)
 
     def _detach_run_state_provider(self) -> None:
         if hasattr(self.agent, "set_run_state_provider"):
@@ -259,7 +301,8 @@ class AgentEngine:
         runtime_events_total = 0
         self._bind_run_context(runtime_run, spec)
         self.agent.run_id = runtime_run.run_id
-        self._attach_boundary_recorders(runtime_run.run_id)
+        self._seed_attempt_evidence(runtime_run.run_id, flow)
+        self._attach_boundary_recorders(runtime_run.run_id, flow)
 
         def persist_run() -> None:
             if self.run_store is not None:
@@ -276,31 +319,24 @@ class AgentEngine:
             attempt_id: str | None = None,
         ) -> None:
             nonlocal runtime_events_total
-            event = self._event(
-                runtime_run, event_type, payload, step_id=step_id, attempt_id=attempt_id
-            )
-            if self.event_store is not None:
-                self.event_store.append(event)
+            with span("event_write"):
+                event = self._event(
+                    runtime_run, event_type, payload, step_id=step_id, attempt_id=attempt_id
+                )
+                if self.event_store is not None:
+                    self.event_store.append(event)
             runtime_events.append(event)
             runtime_events_total += 1
 
         async def save_checkpoint(state: dict[str, object]) -> None:
             if self.run_store is None:
                 return
-            enriched = dict(state)
-            task_state = self._task_state_snapshot()
-            if task_state is not None:
-                enriched["task_state"] = task_state
-            history = self._history_snapshot()
-            if history:
-                enriched["history"] = history
             try:
-                await asyncio.to_thread(
-                    self.run_store.save_checkpoint,
-                    runtime_run.run_id,
-                    enriched,
-                    checkpoint_type="runtime",
-                )
+                with span("checkpoint"):
+                    enriched = await asyncio.to_thread(self._prepare_checkpoint_state, state)
+                    await asyncio.to_thread(
+                        self._persist_checkpoint, runtime_run.run_id, enriched, "runtime"
+                    )
             except Exception as exc:
                 log.warning("checkpoint save failed for run %s", runtime_run.run_id, exc_info=True)
                 try:
@@ -311,6 +347,11 @@ class AgentEngine:
                 except Exception:
                     log.debug("checkpoint failure event could not be recorded", exc_info=True)
                 return
+            iteration_value = enriched.get("iteration")
+            flow.checkpoint_iteration = (
+                iteration_value if isinstance(iteration_value, int) else None
+            )
+            flow.side_effect_status = str(enriched.get("side_effect_status", "settled"))
             record_event(
                 "checkpoint.saved",
                 {
@@ -321,9 +362,27 @@ class AgentEngine:
                 },
             )
 
+        async def save_light_checkpoint(state: dict[str, object]) -> None:
+            if self.run_store is None:
+                return
+            try:
+                with span("checkpoint.light"):
+                    await asyncio.to_thread(
+                        self._persist_checkpoint, runtime_run.run_id, dict(state), "light"
+                    )
+            except Exception:
+                log.warning(
+                    "light checkpoint save failed for run %s", runtime_run.run_id, exc_info=True
+                )
+                return
+            iteration = state.get("iteration")
+            if isinstance(iteration, int):
+                flow.checkpoint_iteration = iteration
+            flow.side_effect_status = str(state.get("side_effect_status", "settled"))
+
         self._attach_boundary_events(record_event)
         self._attach_context_event_sink(record_event)
-        self._attach_run_state_provider(runtime_run, spec)
+        self._attach_run_state_provider(runtime_run, spec, flow)
 
         verified: bool | None = None
         verification = VerificationOutcome(status=VerificationStatus.NOT_RUN)
@@ -361,7 +420,14 @@ class AgentEngine:
                         elif event.kind == "text_reset":
                             flow.output_parts.clear()
                         elif event.kind == "step":
-                            await self._handle_step_event(event, flow, runtime_run, save_checkpoint)
+                            flow.run_state_cache = None
+                            await self._handle_step_event(
+                                event,
+                                flow,
+                                runtime_run,
+                                save_checkpoint,
+                                save_light_checkpoint,
+                            )
                         elif event.kind == "model_call" and not event.text:
                             self._handle_model_call_event(event, flow, record_event)
                         elif event.kind == "plan":
@@ -370,8 +436,29 @@ class AgentEngine:
                             self._handle_recovery_event(event, record_event)
                         elif event.kind == "tool_call" and event.tool_call is not None:
                             self._handle_tool_call_event(event, record_event)
+                            if self._is_mutating_tool(event.tool_call.name):
+                                await save_checkpoint(
+                                    {
+                                        "objective": runtime_run.objective,
+                                        "iteration": event.step,
+                                        "output_chars": sum(
+                                            len(part) for part in flow.output_parts
+                                        ),
+                                        "tool_execution": "pending",
+                                        "side_effect_status": "in_flight",
+                                    }
+                                )
                         elif event.kind == "tool_result" and event.tool_result is not None:
                             self._handle_tool_result_event(event, record_event)
+                            if self._is_mutating_tool(event.tool_result.name):
+                                await save_light_checkpoint(
+                                    {
+                                        "objective": runtime_run.objective,
+                                        "iteration": event.step,
+                                        "tool_execution": "settled",
+                                        "side_effect_status": "settled",
+                                    }
+                                )
                         elif event.kind == "done":
                             verified, verification = await self._handle_done_event(
                                 runtime_run=runtime_run,
@@ -530,9 +617,18 @@ class AgentEngine:
         flow: _RunFlow,
         runtime_run: Run,
         save_checkpoint: _SaveCheckpoint,
+        save_light_checkpoint: _SaveCheckpoint,
     ) -> None:
         flow.steps_since_checkpoint += 1
         if flow.steps_since_checkpoint < self.checkpoint_interval_steps:
+            await save_light_checkpoint(
+                {
+                    "objective": runtime_run.objective,
+                    "iteration": event.step,
+                    "tool_execution": "settled",
+                    "side_effect_status": "settled",
+                }
+            )
             return
         flow.steps_since_checkpoint = 0
         await save_checkpoint(
@@ -837,6 +933,36 @@ class AgentEngine:
                 return []
         return snapshot
 
+    def _prepare_checkpoint_state(self, state: dict[str, object]) -> dict[str, object]:
+        """Enrich a checkpoint payload off the event loop (serialization + validation)."""
+        enriched = dict(state)
+        task_state = self._task_state_snapshot()
+        if task_state is not None:
+            enriched["task_state"] = task_state
+        history = self._history_snapshot()
+        if history:
+            enriched["history"] = history
+        return enriched
+
+    def _persist_checkpoint(
+        self, run_id: str, state: dict[str, object], checkpoint_type: str
+    ) -> int:
+        assert self.run_store is not None, "checkpoint persistence requires a run store"
+        version = self.run_store.save_checkpoint(run_id, state, checkpoint_type=checkpoint_type)
+        if self.checkpoint_keep is not None:
+            self.run_store.prune_checkpoints(run_id, checkpoint_type, self.checkpoint_keep)
+        return version
+
+    def _is_mutating_tool(self, name: str) -> bool:
+        registry = getattr(self.agent, "registry", None)
+        if registry is None:
+            return False
+        try:
+            tool = registry.get(name)
+        except Exception:
+            return False
+        return bool(getattr(tool, "mutates", False))
+
     def _task_state_snapshot(self) -> dict[str, object] | None:
         state = getattr(self.agent, "task_state", None)
         if state is None:
@@ -856,22 +982,33 @@ class AgentEngine:
         except Exception:
             return 0
 
-    def _attach_boundary_recorders(self, run_id: str) -> None:
+    def _attach_boundary_recorders(self, run_id: str, flow: _RunFlow | None = None) -> None:
         boundary = getattr(self.agent, "boundary", None)
-        if (
-            boundary is None
-            or self.attempt_store is None
-            or not hasattr(boundary, "outcome_recorder")
-        ):
+        if boundary is None or not hasattr(boundary, "outcome_recorder"):
             return
         attempt_store = self.attempt_store
+
+        def note_evidence(tool_name: str, status: str, uncertain: bool) -> None:
+            if flow is None:
+                return
+            if uncertain:
+                flow.uncertain_mutation = True
+            if status in {"failed", "timeout", "cancelled", "uncertain"}:
+                flow.attempt_failures.append((tool_name, status))
+                del flow.attempt_failures[:-12]
 
         async def record(outcome: object) -> None:
             from eurus.runtime.contracts import ToolExecutionOutcome
 
             if isinstance(outcome, ToolExecutionOutcome):
                 persisted = replace(outcome, run_id=run_id)
-                await attempt_store.record_async(persisted)
+                note_evidence(
+                    persisted.tool_name,
+                    str(getattr(persisted.status, "value", persisted.status)),
+                    bool(persisted.uncertain),
+                )
+                if attempt_store is not None:
+                    await attempt_store.record_async(persisted)
 
         boundary.outcome_recorder = record
         if hasattr(boundary, "attempt_started_recorder"):
@@ -880,16 +1017,18 @@ class AgentEngine:
                 from eurus.tools.boundary import AttemptStarted
 
                 if isinstance(started, AttemptStarted):
-                    await attempt_store.record_pending_async(
-                        run_id=run_id if started.run_id is None else started.run_id,
-                        tool_name=started.tool_name,
-                        call_key=started.call_key,
-                        attempt_id=started.attempt_id,
-                        risk_level=started.risk_level,
-                    )
+                    note_evidence(started.tool_name, "pending", False)
+                    if attempt_store is not None:
+                        await attempt_store.record_pending_async(
+                            run_id=run_id if started.run_id is None else started.run_id,
+                            tool_name=started.tool_name,
+                            call_key=started.call_key,
+                            attempt_id=started.attempt_id,
+                            risk_level=started.risk_level,
+                        )
 
             boundary.attempt_started_recorder = record_started
-        if hasattr(boundary, "uncertain_keys_provider"):
+        if attempt_store is not None and hasattr(boundary, "uncertain_keys_provider"):
 
             def durable_uncertain_keys(active_run_id: str) -> list[str]:
                 return [

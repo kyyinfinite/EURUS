@@ -1,16 +1,45 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 import time
+from collections import deque
 from collections.abc import AsyncIterator, Mapping, Sequence
+from dataclasses import dataclass
 
-from eurus.errors import AllProvidersFailedError, EurusError, ProviderError
+from eurus.errors import (
+    AllProvidersFailedError,
+    AuthenticationError,
+    EurusError,
+    InvalidRequestError,
+    ProviderError,
+    ProviderUnavailableError,
+)
 from eurus.models import Message, ModelRef
+from eurus.observability import classify_error
 from eurus.providers.base import ChatRequest, ChatResponse, Provider, StreamEvent, ToolSpec
 from eurus.providers.streams import closing_stream
 from eurus.providers.transport import HttpTransport
 
 DEFAULT_COOLDOWN_SECONDS = 30.0
 MAX_COOLDOWN_SECONDS = 300.0
+ATTEMPT_LOG_LIMIT = 32
+SUMMARY_LIMIT = 200
+
+log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class AttemptRecord:
+    provider: str
+    model: str
+    kind: str
+    outcome: str
+    error_category: str = ""
+    error_summary: str = ""
+    duration_ms: int = 0
+    first_token_ms: int | None = None
+    fallback: bool = False
 
 
 class Router:
@@ -33,11 +62,14 @@ class Router:
         transport: HttpTransport | None = None,
         cooldown_seconds: float = DEFAULT_COOLDOWN_SECONDS,
         max_cooldown_seconds: float = MAX_COOLDOWN_SECONDS,
+        first_token_timeout: float | None = None,
     ) -> None:
         if not chain:
             raise ValueError("router needs at least one model")
         if cooldown_seconds < 0 or max_cooldown_seconds < 0:
             raise ValueError("cooldowns cannot be negative")
+        if first_token_timeout is not None and first_token_timeout <= 0:
+            raise ValueError("first_token_timeout must be positive")
         self.providers = dict(providers)
         self.chain = tuple(chain)
         self.temperature = temperature
@@ -46,7 +78,9 @@ class Router:
         self._transport = transport
         self.cooldown_seconds = cooldown_seconds
         self.max_cooldown_seconds = max_cooldown_seconds
+        self.first_token_timeout = first_token_timeout
         self._cooldown_until: dict[str, float] = {}
+        self._attempts: deque[AttemptRecord] = deque(maxlen=ATTEMPT_LOG_LIMIT)
 
     def penalize_provider(self, name: str, *, retry_after: float | None) -> None:
         """Put a provider into cooldown after a failure."""
@@ -70,6 +104,9 @@ class Router:
             del self._cooldown_until[name]
         return remaining
 
+    def attempt_log(self) -> tuple[AttemptRecord, ...]:
+        return tuple(self._attempts)
+
     def _candidates(self) -> list[ModelRef]:
         cooling = self.provider_cooldowns()
         if not cooling:
@@ -78,6 +115,62 @@ class Router:
         if active:
             return active
         return sorted(self.chain, key=lambda ref: cooling.get(ref.provider, 0.0))
+
+    def _record(
+        self,
+        ref: ModelRef,
+        kind: str,
+        outcome: str,
+        error: ProviderError | None = None,
+        *,
+        started_at: float | None = None,
+        first_token_ms: int | None = None,
+        fallback: bool = False,
+    ) -> None:
+        duration = int((time.monotonic() - started_at) * 1000) if started_at is not None else 0
+        self._attempts.append(
+            AttemptRecord(
+                provider=ref.provider,
+                model=ref.model,
+                kind=kind,
+                outcome=outcome,
+                error_category=classify_error(error) if error is not None else "",
+                error_summary=str(error)[:SUMMARY_LIMIT] if error is not None else "",
+                duration_ms=duration,
+                first_token_ms=first_token_ms,
+                fallback=fallback,
+            )
+        )
+
+    def _note_failure(
+        self,
+        ref: ModelRef,
+        kind: str,
+        exc: ProviderError,
+        *,
+        started_at: float | None = None,
+        first_token_ms: int | None = None,
+        fallback: bool = False,
+    ) -> None:
+        if not isinstance(exc, InvalidRequestError):
+            self.penalize_provider(ref.provider, retry_after=exc.retry_after)
+        log.warning(
+            "provider candidate failed: provider=%s model=%s kind=%s category=%s cooldown=%s",
+            ref.provider,
+            ref.model,
+            kind,
+            classify_error(exc),
+            not isinstance(exc, InvalidRequestError),
+        )
+        self._record(
+            ref,
+            kind,
+            "failed",
+            exc,
+            started_at=started_at,
+            first_token_ms=first_token_ms,
+            fallback=fallback,
+        )
 
     def _request(
         self,
@@ -110,16 +203,27 @@ class Router:
         max_tokens: int | None = None,
     ) -> ChatResponse:
         failures: list[tuple[str, ProviderError]] = []
+        auth_failed: dict[str, AuthenticationError] = {}
+        fallback = False
         for ref in self._candidates():
+            if ref.provider in auth_failed:
+                failures.append((str(ref), auth_failed[ref.provider]))
+                self._record(ref, "chat", "skipped", auth_failed[ref.provider], fallback=fallback)
+                continue
             request = self._request(ref, messages, tools, temperature, max_tokens)
+            started_at = time.monotonic()
             try:
                 response = await self.providers[ref.provider].chat(request)
             except ProviderError as exc:
+                if isinstance(exc, AuthenticationError):
+                    auth_failed.setdefault(ref.provider, exc)
                 failures.append((str(ref), exc))
-                self.penalize_provider(ref.provider, retry_after=exc.retry_after)
+                self._note_failure(ref, "chat", exc, started_at=started_at, fallback=fallback)
+                fallback = True
                 continue
             self._cooldown_until.pop(ref.provider, None)
             self.last_used = ref
+            self._record(ref, "chat", "success", started_at=started_at, fallback=fallback)
             return response
         raise self._failure(failures)
 
@@ -132,24 +236,74 @@ class Router:
         max_tokens: int | None = None,
     ) -> AsyncIterator[StreamEvent]:
         failures: list[tuple[str, ProviderError]] = []
+        auth_failed: dict[str, AuthenticationError] = {}
+        fallback = False
         for ref in self._candidates():
+            if ref.provider in auth_failed:
+                failures.append((str(ref), auth_failed[ref.provider]))
+                self._record(ref, "stream", "skipped", auth_failed[ref.provider], fallback=fallback)
+                continue
             request = self._request(ref, messages, tools, temperature, max_tokens)
+            started_at = time.monotonic()
+            first_token_ms: int | None = None
             started = False
             try:
                 async with closing_stream(self.providers[ref.provider].stream(request)) as events:
-                    async for event in events:
+                    iterator = events.__aiter__()
+                    if self.first_token_timeout is not None:
+                        try:
+                            event = await asyncio.wait_for(
+                                iterator.__anext__(), self.first_token_timeout
+                            )
+                        except TimeoutError as exc:
+                            raise ProviderUnavailableError(
+                                f"{ref.provider}: no first token within "
+                                f"{self.first_token_timeout:g}s",
+                                provider=ref.provider,
+                                retryable=True,
+                            ) from exc
+                        except StopAsyncIteration as exc:
+                            raise ProviderUnavailableError(
+                                f"{ref.provider}: stream ended without events",
+                                provider=ref.provider,
+                                retryable=True,
+                            ) from exc
+                        started = True
+                        first_token_ms = int((time.monotonic() - started_at) * 1000)
+                        self.last_used = ref
+                        yield event
+                    async for event in iterator:
                         if not started:
                             started = True
+                            first_token_ms = int((time.monotonic() - started_at) * 1000)
                             self.last_used = ref
                         yield event
                 self._cooldown_until.pop(ref.provider, None)
                 self.last_used = ref
+                self._record(
+                    ref,
+                    "stream",
+                    "success",
+                    started_at=started_at,
+                    first_token_ms=first_token_ms,
+                    fallback=fallback,
+                )
                 return
             except ProviderError as exc:
                 if started:
                     raise
+                if isinstance(exc, AuthenticationError):
+                    auth_failed.setdefault(ref.provider, exc)
                 failures.append((str(ref), exc))
-                self.penalize_provider(ref.provider, retry_after=exc.retry_after)
+                self._note_failure(
+                    ref,
+                    "stream",
+                    exc,
+                    started_at=started_at,
+                    first_token_ms=first_token_ms,
+                    fallback=fallback,
+                )
+                fallback = True
         raise self._failure(failures)
 
     async def aclose(self) -> None:

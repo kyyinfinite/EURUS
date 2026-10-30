@@ -16,6 +16,7 @@ from eurus.providers.openai_compat import OpenAICompatProvider
 from eurus.providers.policy import is_local_url
 from eurus.providers.router import Router
 from eurus.providers.transport import HttpTransport
+from eurus.runtime.instrumentation import span
 
 PROVIDER_CLASSES: dict[str, type[Provider]] = {
     "openai": OpenAICompatProvider,
@@ -87,6 +88,38 @@ def resolve_auxiliary_chain(config: Config) -> list[ModelRef]:
     return chain
 
 
+def _assemble_router(
+    config: Config,
+    chain: list[ModelRef],
+    *,
+    owned: bool,
+    shared: HttpTransport,
+    environ: Mapping[str, str] | None,
+) -> Router:
+    retry = RetryPolicy(max_retries=config.network.max_retries, jitter=config.network.retry_jitter)
+    providers: dict[str, Provider] = {}
+    for ref in chain:
+        if ref.provider in providers:
+            continue
+        spec = config.providers[ref.provider]
+        providers[ref.provider] = build_provider(
+            spec,
+            resolve_api_key(spec, environ),
+            shared,
+            retry,
+            config.network.timeout_seconds,
+        )
+    return Router(
+        providers,
+        chain,
+        temperature=config.agent.temperature,
+        transport=shared if owned else None,
+        cooldown_seconds=config.network.cooldown_seconds,
+        max_cooldown_seconds=config.network.max_cooldown_seconds,
+        first_token_timeout=config.network.first_token_seconds,
+    )
+
+
 def build_auxiliary_router(
     config: Config,
     *,
@@ -96,29 +129,14 @@ def build_auxiliary_router(
     chain = resolve_auxiliary_chain(config)
     if not chain:
         return None
-    owned = transport is None
-    shared: HttpTransport = (
-        HttpxTransport(timeout=config.network.timeout_seconds) if transport is None else transport
-    )
-    retry = RetryPolicy(max_retries=config.network.max_retries)
-    providers: dict[str, Provider] = {}
-    for ref in chain:
-        if ref.provider in providers:
-            continue
-        spec = config.providers[ref.provider]
-        providers[ref.provider] = build_provider(
-            spec,
-            resolve_api_key(spec, environ),
-            shared,
-            retry,
-            config.network.timeout_seconds,
+    with span("build_auxiliary_router"):
+        owned = transport is None
+        shared: HttpTransport = (
+            HttpxTransport(timeout=config.network.timeout_seconds)
+            if transport is None
+            else transport
         )
-    return Router(
-        providers,
-        chain,
-        temperature=config.agent.temperature,
-        transport=shared if owned else None,
-    )
+        return _assemble_router(config, chain, owned=owned, shared=shared, environ=environ)
 
 
 def build_router(
@@ -128,27 +146,12 @@ def build_router(
     transport: HttpTransport | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> Router:
-    chain = resolve_chain(config, model)
-    owned = transport is None
-    shared: HttpTransport = (
-        HttpxTransport(timeout=config.network.timeout_seconds) if transport is None else transport
-    )
-    retry = RetryPolicy(max_retries=config.network.max_retries)
-    providers: dict[str, Provider] = {}
-    for ref in chain:
-        if ref.provider in providers:
-            continue
-        spec = config.providers[ref.provider]
-        providers[ref.provider] = build_provider(
-            spec,
-            resolve_api_key(spec, environ),
-            shared,
-            retry,
-            config.network.timeout_seconds,
+    with span("build_router"):
+        chain = resolve_chain(config, model)
+        owned = transport is None
+        shared: HttpTransport = (
+            HttpxTransport(timeout=config.network.timeout_seconds)
+            if transport is None
+            else transport
         )
-    return Router(
-        providers,
-        chain,
-        temperature=config.agent.temperature,
-        transport=shared if owned else None,
-    )
+        return _assemble_router(config, chain, owned=owned, shared=shared, environ=environ)
