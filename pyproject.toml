@@ -40,6 +40,7 @@ sdk = ["groq>=0.13", "google-genai>=1.0"]
 mcp = ["mcp>=1.9,<2"]
 telegram = ["aiogram>=3.29,<4"]
 browser = ["playwright>=1.50"]
+browser-cdp = ["websockets>=12"]
 documents = ["python-docx>=1.1", "openpyxl>=3.1", "python-pptx>=1.0"]
 dev = [
     "pytest>=8.0",
@@ -81,6 +82,9 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 faulthandler_timeout = 120
+markers = [
+    "browser_integration: tests that launch a real Chromium (skipped when unavailable)",
+]
 
 [tool.mypy]
 python_version = "3.11"
@@ -89,7 +93,7 @@ files = ["src"]
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = ["mcp", "mcp.*", "aiogram", "aiogram.*", "pptx", "pptx.*", "trafilatura", "ddgs", "playwright", "playwright.*"]
+module = ["mcp", "mcp.*", "aiogram", "aiogram.*", "pptx", "pptx.*", "trafilatura", "ddgs", "playwright", "playwright.*", "websockets", "websockets.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

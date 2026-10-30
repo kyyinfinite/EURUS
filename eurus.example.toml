@@ -55,3 +55,27 @@ network = false
 memory_mb = 1024
 cpu_limit = 1.0
 pids_limit = 128
+
+[browser]
+enabled = false
+# auto | cdp | playwright | remote | attach
+# auto picks cdp on Termux, playwright elsewhere (cdp fallback)
+backend = "auto"
+# cdp_endpoint = "http://127.0.0.1:9222"   # required for remote/attach
+# chromium_executable = "/usr/bin/chromium" # auto-detected when empty
+# profile_dir = ""                          # default: ~/.eurus/browser/profile
+headless = true
+max_page_bytes = 2000000
+navigation_timeout_seconds = 30.0
+interaction_timeout_seconds = 10.0
+startup_timeout_seconds = 25.0
+max_screenshot_width = 1280
+max_screenshot_height = 800
+max_snapshot_tokens = 3000
+allowed_domains = []
+blocked_domains = []
+download_dir = ""
+max_download_mb = 50
+dns_cache_ttl_seconds = 60.0
+max_sessions = 3
+session_idle_ttl_seconds = 900.0

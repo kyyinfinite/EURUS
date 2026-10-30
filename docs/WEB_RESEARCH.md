@@ -34,27 +34,14 @@ Web tools require internet access and may be affected by search-engine rate
 limits. On Termux, the same tools work over the device's normal network stack;
 no browser binaries are required.
 
-## Optional browser automation
+## Browser automation
 
-Install the extra and enable it in configuration:
-
-```bash
-python -m pip install -e ".[browser]"
-playwright install chromium
-```
-
-```toml
-[browser]
-enabled = true
-max_page_bytes = 2000000
-navigation_timeout_seconds = 30.0
-max_screenshot_width = 1280
-max_screenshot_height = 800
-```
-
-`browser_navigate`, `browser_read`, `browser_click`, `browser_type`, and
-`browser_screenshot` become available. Screenshots are confined to the workspace
-and require approval. When Playwright is missing, the tools return an explicit
+The browser tools are documented in [Browser Automation](BROWSER.md). In
+short: enable them in configuration, install either the `[browser]` (Playwright)
+or `[browser-cdp]` (raw CDP, Termux-friendly) extra, and the agent gets a
+snapshot-driven browser it drives by element reference instead of by guessed CSS
+selectors. Screenshots stay confined to the workspace and consequential actions
+require approval. When no backend is importable, the tools return an explicit
 unavailable-capability message instead of pretending a browser session exists,
 and the HTTP tools above remain the fallback.
 

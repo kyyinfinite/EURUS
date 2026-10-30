@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 from typing import Any
 
@@ -137,6 +138,10 @@ def gateway_telegram(ctx: click.Context, max_concurrent: int) -> None:
                 )
 
             async def close_resources() -> None:
+                from eurus.browser.integration import close_registry_browser
+
+                with contextlib.suppress(Exception):
+                    await close_registry_browser(registry)
                 await mcp.close()
                 await router.aclose()
 
@@ -188,6 +193,10 @@ def gateway_telegram(ctx: click.Context, max_concurrent: int) -> None:
                 await runtime.close()
         except BaseException:
             if runtime is None:
+                from eurus.browser.integration import close_registry_browser
+
+                with contextlib.suppress(Exception):
+                    await close_registry_browser(registry)
                 await mcp.close()
                 await router.aclose()
             raise

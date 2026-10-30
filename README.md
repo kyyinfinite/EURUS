@@ -48,7 +48,7 @@ The project is being developed with small servers and Android Termux in mind. Op
 | **Verification** | Step and completion checks that distinguish supported results from unverified claims; criteria-aware step verification |
 | **Safety controls** | Approval hooks for mutating tools, workspace/path controls, action journaling, network guards, and redaction |
 | **Memory and sessions** | Local SQLite session history, FTS5 keyword search, trust-tiered memory, and budgeted memory injection into prompts |
-| **Research and browser** | Web search/fetch tools; optional browser automation integration |
+| **Research and browser** | Web search/fetch tools; snapshot-driven browser automation with a pure-Python CDP backend (Termux-first) and an optional Playwright backend |
 | **Extensibility** | Custom tools, validated skill learning with quarantined drafts and owner-approved promotion, optional MCP integration, document workflows, and Telegram gateway |
 | **Terminal UI** | CLI and interactive TUI with themes, model selection, and runtime feedback |
 
@@ -286,13 +286,14 @@ Install only the extras you need:
 pip install -e ".[web]"      # Web search and fetch (ddgs + trafilatura)
 pip install -e ".[mcp]"        # Model Context Protocol
 pip install -e ".[telegram]"   # Telegram gateway
-pip install -e ".[browser]"    # Browser integration
+pip install -e ".[browser]"    # Browser automation via Playwright (PC/VPS)
+pip install -e ".[browser-cdp]" # Browser automation via raw CDP (Termux-friendly)
 pip install -e ".[documents]"  # Office/document workflows
 pip install -e ".[groq]"       # Official Groq SDK
 pip install -e ".[genai]"      # Google GenAI SDK
 ```
 
-Browser automation may require separate browser binaries and platform setup. Installing the Python extra alone does not guarantee that a browser can launch on every operating system.
+Browser automation needs a Chromium binary. On PC/VPS run `playwright install chromium` after installing the `[browser]` extra. On Android Termux install the distro package (`pkg install x11-repo && pkg install chromium`) and keep `browser.backend = "auto"` (raw CDP, no Playwright). See [Browser Automation](docs/BROWSER.md) for setup, security policy, and the full tool reference.
 
 ## Documentation
 
@@ -300,6 +301,7 @@ Browser automation may require separate browser binaries and platform setup. Ins
 - [Roadmap](docs/ROADMAP.md) — current priorities and planned work
 - [Provider Configuration](docs/PROVIDERS.md) — providers, fallbacks, and diagnostics
 - [Web Research](docs/WEB_RESEARCH.md) — search and fetch tools
+- [Browser Automation](docs/BROWSER.md) — snapshot-driven browsing, backends, security policy
 - [Task Execution](docs/TASK_EXECUTION.md) — execution model and task workflows
 - [MCP Integration](docs/MCP.md) — optional MCP support
 - [Multi-file Workflow](docs/MULTI_FILE_WORKFLOW.md) — workspace coding workflow

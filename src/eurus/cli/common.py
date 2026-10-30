@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 from typing import Any
 
@@ -138,5 +139,9 @@ async def _run_once(config: Config, text: str, stream: bool) -> RunResult:
         )
         return result
     finally:
+        from eurus.browser.integration import close_registry_browser
+
+        with contextlib.suppress(Exception):
+            await close_registry_browser(registry)
         await mcp.close()
         await router.aclose()

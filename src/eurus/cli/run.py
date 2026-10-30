@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import sys
 
@@ -166,6 +167,10 @@ def chat(ctx: click.Context, stream: bool, session_id: str | None) -> None:
                     except KeyboardInterrupt:
                         click.echo("\ninterrupted", err=True)
         finally:
+            from eurus.browser.integration import close_registry_browser
+
+            with contextlib.suppress(Exception):
+                runner.run(close_registry_browser(registry))
             runner.run(mcp.close())
             runner.run(router.aclose())
 

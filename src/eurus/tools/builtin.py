@@ -171,14 +171,7 @@ def default_registry(
         for tool in workflow_tools():
             registry.register(tool)
     if browser_settings is not None and bool(getattr(browser_settings, "enabled", False)):
-        from eurus.browser.tools import browser_tools
+        from eurus.browser.integration import ensure_browser_tools
 
-        for tool in browser_tools(
-            navigation_timeout=float(getattr(browser_settings, "navigation_timeout_seconds", 30.0)),
-            max_page_bytes=int(getattr(browser_settings, "max_page_bytes", 2_000_000)),
-            max_screenshot_width=int(getattr(browser_settings, "max_screenshot_width", 1280)),
-            max_screenshot_height=int(getattr(browser_settings, "max_screenshot_height", 800)),
-        ):
-            if tool.name not in registry:
-                registry.register(tool)
+        ensure_browser_tools(registry, browser_settings)
     return registry

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import tempfile
 import time
 from dataclasses import asdict, dataclass
@@ -97,6 +98,11 @@ async def run_task(
             stop_reason = result.run.stop_reason or stop_reason
         except EurusError as exc:
             detail = str(exc)
+        finally:
+            from eurus.browser.integration import close_registry_browser
+
+            with contextlib.suppress(Exception):
+                await close_registry_browser(registry)
         validation = run_validation(
             root, task.check, timeout_seconds=CHECK_TIMEOUT, env=scrubbed_env()
         )

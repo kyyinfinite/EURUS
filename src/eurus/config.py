@@ -224,6 +224,9 @@ class PricingConfig:
     models: dict[str, dict[str, float | str]] = field(default_factory=dict)
 
 
+BROWSER_BACKENDS = ("auto", "cdp", "playwright", "remote", "attach")
+
+
 @dataclass(frozen=True, slots=True)
 class BrowserConfig:
     enabled: bool = False
@@ -231,6 +234,21 @@ class BrowserConfig:
     navigation_timeout_seconds: float = 30.0
     max_screenshot_width: int = 1280
     max_screenshot_height: int = 800
+    backend: str = "auto"
+    cdp_endpoint: str = ""
+    chromium_executable: str = ""
+    profile_dir: str = ""
+    headless: bool = True
+    interaction_timeout_seconds: float = 10.0
+    startup_timeout_seconds: float = 25.0
+    max_snapshot_tokens: int = 3000
+    allowed_domains: tuple[str, ...] = ()
+    blocked_domains: tuple[str, ...] = ()
+    download_dir: str = ""
+    max_download_mb: int = 50
+    dns_cache_ttl_seconds: float = 60.0
+    max_sessions: int = 3
+    session_idle_ttl_seconds: float = 900.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -668,6 +686,21 @@ def _build_browser(raw: Mapping[str, Any]) -> BrowserConfig:
             "navigation_timeout_seconds",
             "max_screenshot_width",
             "max_screenshot_height",
+            "backend",
+            "cdp_endpoint",
+            "chromium_executable",
+            "profile_dir",
+            "headless",
+            "interaction_timeout_seconds",
+            "startup_timeout_seconds",
+            "max_snapshot_tokens",
+            "allowed_domains",
+            "blocked_domains",
+            "download_dir",
+            "max_download_mb",
+            "dns_cache_ttl_seconds",
+            "max_sessions",
+            "session_idle_ttl_seconds",
         },
         "browser",
     )
@@ -676,18 +709,78 @@ def _build_browser(raw: Mapping[str, Any]) -> BrowserConfig:
     navigation_timeout = _get(section, "navigation_timeout_seconds", float, 30.0, "browser")
     screenshot_width = _get(section, "max_screenshot_width", int, 1280, "browser")
     screenshot_height = _get(section, "max_screenshot_height", int, 800, "browser")
+    backend = _get(section, "backend", str, "auto", "browser").strip().lower()
+    cdp_endpoint = _get(section, "cdp_endpoint", str, "", "browser").strip()
+    chromium_executable = _get(section, "chromium_executable", str, "", "browser").strip()
+    profile_dir = _get(section, "profile_dir", str, "", "browser").strip()
+    headless = _get(section, "headless", bool, True, "browser")
+    interaction_timeout = _get(section, "interaction_timeout_seconds", float, 10.0, "browser")
+    startup_timeout = _get(section, "startup_timeout_seconds", float, 25.0, "browser")
+    max_snapshot_tokens = _get(section, "max_snapshot_tokens", int, 3000, "browser")
+    allowed_domains = _get(section, "allowed_domains", list, [], "browser")
+    blocked_domains = _get(section, "blocked_domains", list, [], "browser")
+    download_dir = _get(section, "download_dir", str, "", "browser").strip()
+    max_download_mb = _get(section, "max_download_mb", int, 50, "browser")
+    dns_cache_ttl = _get(section, "dns_cache_ttl_seconds", float, 60.0, "browser")
+    max_sessions = _get(section, "max_sessions", int, 3, "browser")
+    session_idle_ttl = _get(section, "session_idle_ttl_seconds", float, 900.0, "browser")
     if not 100_000 <= max_page_bytes <= 20_000_000:
         raise ConfigError("browser.max_page_bytes must be between 100000 and 20000000")
     if not 5.0 <= navigation_timeout <= 300.0:
         raise ConfigError("browser.navigation_timeout_seconds must be between 5 and 300")
     if not 320 <= screenshot_width <= 3840 or not 240 <= screenshot_height <= 2160:
         raise ConfigError("browser screenshot bounds are outside the allowed range")
+    if backend not in BROWSER_BACKENDS:
+        allowed = ", ".join(repr(item) for item in BROWSER_BACKENDS)
+        raise ConfigError(f"browser.backend currently supports only {allowed}")
+    if backend in {"remote", "attach"} and not cdp_endpoint:
+        raise ConfigError(f"browser.backend {backend!r} requires browser.cdp_endpoint")
+    if not 1.0 <= interaction_timeout <= 120.0:
+        raise ConfigError("browser.interaction_timeout_seconds must be between 1 and 120")
+    if not 5.0 <= startup_timeout <= 120.0:
+        raise ConfigError("browser.startup_timeout_seconds must be between 5 and 120")
+    if not 200 <= max_snapshot_tokens <= 20_000:
+        raise ConfigError("browser.max_snapshot_tokens must be between 200 and 20000")
+    if not 1 <= max_download_mb <= 500:
+        raise ConfigError("browser.max_download_mb must be between 1 and 500")
+    if not 1.0 <= dns_cache_ttl <= 3600.0:
+        raise ConfigError("browser.dns_cache_ttl_seconds must be between 1 and 3600")
+    if not 1 <= max_sessions <= 8:
+        raise ConfigError("browser.max_sessions must be between 1 and 8")
+    if not 30.0 <= session_idle_ttl <= 86400.0:
+        raise ConfigError("browser.session_idle_ttl_seconds must be between 30 and 86400")
+    domain_groups = (("allowed_domains", allowed_domains), ("blocked_domains", blocked_domains))
+    for name, domains in domain_groups:
+        cleaned: list[str] = []
+        for entry in domains:
+            if not isinstance(entry, str) or not entry.strip():
+                raise ConfigError(f"browser.{name} entries must be non-empty strings")
+            cleaned.append(entry.strip().lower().lstrip("."))
+        if name == "allowed_domains":
+            allowed_clean: tuple[str, ...] = tuple(cleaned)
+        else:
+            blocked_clean: tuple[str, ...] = tuple(cleaned)
     return BrowserConfig(
         enabled=enabled,
         max_page_bytes=max_page_bytes,
         navigation_timeout_seconds=navigation_timeout,
         max_screenshot_width=screenshot_width,
         max_screenshot_height=screenshot_height,
+        backend=backend,
+        cdp_endpoint=cdp_endpoint,
+        chromium_executable=chromium_executable,
+        profile_dir=profile_dir,
+        headless=headless,
+        interaction_timeout_seconds=interaction_timeout,
+        startup_timeout_seconds=startup_timeout,
+        max_snapshot_tokens=max_snapshot_tokens,
+        allowed_domains=allowed_clean,
+        blocked_domains=blocked_clean,
+        download_dir=download_dir,
+        max_download_mb=max_download_mb,
+        dns_cache_ttl_seconds=dns_cache_ttl,
+        max_sessions=max_sessions,
+        session_idle_ttl_seconds=session_idle_ttl,
     )
 
 

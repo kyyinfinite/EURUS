@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 
 import click
 from rich.console import Console
@@ -267,6 +268,10 @@ def schedule_daemon(ctx: click.Context, poll_seconds: int, workers: int, owner: 
                 raise RuntimeError(result.run.stop_reason or "no_verifiable_text_result")
             return result.output.strip()
         finally:
+            from eurus.browser.integration import close_registry_browser
+
+            with contextlib.suppress(Exception):
+                await close_registry_browser(registry)
             await mcp.close()
             await router.aclose()
 

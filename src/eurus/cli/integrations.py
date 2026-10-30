@@ -9,17 +9,23 @@ from rich.console import Console
 from rich.table import Table
 
 from eurus import paths
-from eurus.cli.base import main
+from eurus.cli.base import _state, main
 from eurus.mcp.manager import MCPServerConfig, MCPToolManager
 from eurus.tools.builtin import default_registry
 
 
 @main.command("tools")
-def tools_command() -> None:
+@click.pass_context
+def tools_command(ctx: click.Context) -> None:
+    from eurus.browser.integration import ensure_browser_tools
+
+    config = _state(ctx).config
+    registry = default_registry(include_capability_tools=True)
+    ensure_browser_tools(registry, config.browser)
     table = Table(title="tools")
     for column in ("Name", "Changes things", "Description"):
         table.add_column(column)
-    for item in default_registry(include_capability_tools=True).all():
+    for item in registry.all():
         table.add_row(item.name, "yes" if item.mutates else "no", item.description)
     Console().print(table)
 

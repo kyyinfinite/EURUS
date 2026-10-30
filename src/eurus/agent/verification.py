@@ -21,7 +21,17 @@ FILE_EXTENSION_PATTERN = re.compile(
 QUOTED_PATH_PATTERN = re.compile(r"[`\"']([^`\"'\n]{1,200})[`\"']")
 COMMAND_TOOL_NAMES = frozenset({"shell", "run_checks"})
 RESEARCH_TOOL_NAMES = frozenset(
-    {"web_search", "web_fetch", "deep_search", "browser_navigate", "browser_read"}
+    {
+        "web_search",
+        "web_fetch",
+        "deep_search",
+        "browser_navigate",
+        "browser_read",
+        "browser_snapshot",
+        "browser_extract",
+        "browser_click",
+        "browser_tabs",
+    }
 )
 COMMAND_EXECUTION_INTENT = re.compile(
     r"\b(?:run|running|execute|executing|invoke|invoking|launch|launching)\s+"

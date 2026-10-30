@@ -65,6 +65,9 @@ def build_agent(
             browser_settings=config.browser,
         )
     )
+    from eurus.browser.integration import ensure_browser_tools
+
+    ensure_browser_tools(tools, config.browser, workspace=root)
     if shell and "shell" not in tools:
         sandbox: Sandbox
         if config.sandbox.backend == "host":

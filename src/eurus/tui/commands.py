@@ -40,6 +40,11 @@ COMMANDS: tuple[Command, ...] = (
     Command("/resume", "Resume a saved conversation", "/resume [latest|session-id]"),
     Command("/tools", "List registered tools"),
     Command(
+        "/browser",
+        "Show browser automation status; optionally stop the browser",
+        "/browser [status|stop]",
+    ),
+    Command(
         "/grants",
         "Review or revoke session approval grants",
         "/grants [revoke <fingerprint> | revoke-all]",

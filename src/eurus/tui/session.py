@@ -141,6 +141,7 @@ class InteractiveSession:
             "/sessions": self._sessions,
             "/resume": self._resume,
             "/tools": self._tools,
+            "/browser": self._browser,
             "/grants": self._grants,
             "/status": self._status,
             "/config": self._config,
@@ -531,6 +532,58 @@ class InteractiveSession:
                 rows.append((name, tool.description))
         self.renderer.table("Tools", rows)
 
+    def _browser(self, argument: str) -> None:
+        from eurus.browser.integration import registry_manager
+
+        action = argument.strip().lower() or "status"
+        manager = registry_manager(self.registry)
+        if not self.config.browser.enabled:
+            self.renderer.warning(
+                "Browser automation is disabled; enable it with [browser] enabled = true."
+            )
+            return
+        if manager is None:
+            self.renderer.system("Browser starts lazily with the first browser tool call.")
+            return
+        if action == "stop":
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._stop_browser())
+            return
+        status = manager.status()
+        backend = str(status.get("backend", "unknown"))
+        connected = "connected" if status.get("connected") else "not started"
+        ownership = "owned process" if status.get("owns_process") else "external browser"
+        sessions = status.get("sessions", {})
+        rows = [
+            ("backend", backend),
+            ("connection", connected),
+            ("process", ownership),
+            ("profile", str(status.get("profile_dir") or "default (~/.eurus/browser/profile)")),
+            ("downloads", str(status.get("download_dir", ""))),
+        ]
+        for key, item in sessions.items():
+            rows.append(
+                (
+                    f"run {key}",
+                    f"{item.get('tabs', 0)} tab(s), idle {item.get('idle_seconds', 0):g}s",
+                )
+            )
+        if not sessions:
+            rows.append(("runs", "no active browser runs"))
+        self.renderer.table("Browser", rows)
+
+    async def _stop_browser(self) -> None:
+        from eurus.browser.integration import registry_manager
+
+        manager = registry_manager(self.registry)
+        if manager is None:
+            return
+        try:
+            await manager.stop()
+            self.renderer.system("Browser stopped; it restarts with the next browser tool call.")
+        except Exception as exc:
+            self.renderer.error(f"browser stop failed: {exc}")
+
     def _grants(self, argument: str) -> None:
         action, _, rest = argument.partition(" ")
         action = action.lower() or "list"
@@ -913,6 +966,8 @@ class InteractiveSession:
         raise RuntimeError("the interactive session supplies its own agent for every turn")
 
     async def close(self) -> None:
+        from eurus.browser.integration import close_registry_browser
+
         runtime, self._runtime = self._runtime, None
         try:
             if runtime is not None:
@@ -931,6 +986,10 @@ class InteractiveSession:
                 if router is not None:
                     await router.aclose()
             finally:
+                try:
+                    await close_registry_browser(self.registry)
+                except Exception:
+                    log.debug("browser close failed", exc_info=True)
                 database, self._engine_database = self._engine_database, None
                 self._engine_stores = None
                 self._cached_pricing = None

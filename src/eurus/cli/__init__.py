@@ -87,6 +87,7 @@ __all__ = [
     "annotations",
     "approval_request",
     "asyncio",
+    "browser",
     "build_agent",
     "build_pricing_catalog",
     "build_router",
@@ -128,6 +129,7 @@ __all__ = [
 
 
 from eurus.cli import (
+    browser,
     common,
     config_cmds,
     core,
