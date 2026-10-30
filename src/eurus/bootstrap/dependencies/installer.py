@@ -5,6 +5,7 @@ import contextlib
 import os
 import shlex
 import sys
+from collections.abc import Callable
 
 from eurus.bootstrap.models import InstallOutcome
 from eurus.logs import redact
@@ -17,7 +18,7 @@ async def run_pip(
     arguments: list[str],
     *,
     timeout: float = INSTALL_TIMEOUT_SECONDS,
-    on_line: object | None = None,
+    on_line: Callable[[str], object] | None = None,
     environ: dict[str, str] | None = None,
 ) -> tuple[int, str]:
     executable = sys.executable or "python3"
@@ -46,8 +47,7 @@ async def run_pip(
             collected.append(text)
             if on_line is not None:
                 try:
-                    callback = on_line  # type: ignore[operator]
-                    result = callback(text)
+                    result = on_line(text)
                     if asyncio.iscoroutine(result):
                         await result
                 except Exception:
@@ -75,7 +75,7 @@ def install_targets(
     targets: list[str],
     *,
     timeout: float = INSTALL_TIMEOUT_SECONDS,
-    on_line: object | None = None,
+    on_line: Callable[[str], object] | None = None,
     environ: dict[str, str] | None = None,
     dry_run_only: bool = False,
 ) -> InstallOutcome:
@@ -106,7 +106,12 @@ def install_targets(
     return InstallOutcome(success=True, targets=tuple(targets), returncode=0, output_tail=sanitized)
 
 
-def upgrade_targets(targets: list[str], **kwargs: object) -> InstallOutcome:
+def upgrade_targets(
+    targets: list[str],
+    *,
+    timeout: float = INSTALL_TIMEOUT_SECONDS,
+    environ: dict[str, str] | None = None,
+) -> InstallOutcome:
     if not targets:
         return InstallOutcome(success=True, targets=(), returncode=0, output_tail="")
     arguments = [
@@ -120,8 +125,8 @@ def upgrade_targets(targets: list[str], **kwargs: object) -> InstallOutcome:
     returncode, output = asyncio.run(
         run_pip(
             arguments,
-            timeout=float(kwargs.get("timeout", INSTALL_TIMEOUT_SECONDS)),
-            environ=kwargs.get("environ"),
+            timeout=timeout,
+            environ=environ,
         )
     )
     tail = "\n".join(output.splitlines()[-OUTPUT_TAIL_LINES:])

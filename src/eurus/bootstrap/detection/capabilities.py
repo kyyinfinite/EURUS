@@ -6,11 +6,14 @@ import socket
 from dataclasses import dataclass
 from pathlib import Path
 
-from eurus.bootstrap.detection.architecture import ArchitectureInfo, is_wheel_platform
-from eurus.bootstrap.detection.package_manager import PackageManagerInfo
-from eurus.bootstrap.detection.platform import PlatformInfo
-from eurus.bootstrap.detection.python import PythonInfo
-from eurus.bootstrap.models import CapabilityReport
+from eurus.bootstrap.detection.architecture import is_wheel_platform
+from eurus.bootstrap.models import (
+    ArchitectureInfo,
+    CapabilityReport,
+    PackageManagerInfo,
+    PlatformInfo,
+    PythonInfo,
+)
 
 BROWSER_PROBE_HOSTS = (("connectivity.eurus.invalid", 443),)
 DNS_PROBE_HOST = "1.1.1.1"

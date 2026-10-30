@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from enum import Enum
+from typing import Any, Final
 
 READY = "READY"
 MISSING = "MISSING"
@@ -15,7 +16,13 @@ STATUSES: tuple[str, ...] = (READY, MISSING, BROKEN, OUTDATED, OPTIONAL, BLOCKED
 
 MANDATORY_BAD = frozenset({MISSING, BROKEN, BLOCKED})
 
-CONFIG_UNSET = object()
+
+
+class ConfigUnset(Enum):
+    UNSET = "unset"
+
+
+CONFIG_UNSET: Final = ConfigUnset.UNSET
 
 
 class BootstrapError(Exception):

@@ -7,11 +7,11 @@ from typing import Any
 from eurus.bootstrap.dependencies.system_catalog import INSTALL_ARGUMENTS, PACKAGE_BY_KEY
 from eurus.bootstrap.dependencies.system_inspector import inspect_system_packages
 from eurus.bootstrap.detection.package_manager import (
-    PackageManagerInfo,
     detect_package_manager,
     manager_prefix,
     needs_root,
 )
+from eurus.bootstrap.models import PackageManagerInfo
 
 
 @dataclass(slots=True)

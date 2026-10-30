@@ -258,7 +258,7 @@ class BootstrapDashboard:
             io.echo(outcome.output_tail)
 
     def module_providers(self) -> None:
-        config = load_config_safe(self.environ)
+        config = load_config_safe(self.environ_effective())
         run_provider_setup(self.io, config, self.environ_effective())
 
     def module_browser(self) -> None:
@@ -346,7 +346,7 @@ class BootstrapDashboard:
         if not token:
             io.info("token entry cancelled")
             return
-        from eurus.bootstrap.integrations.telegram import validate_telegram_token
+        from eurus.bootstrap.configuration.secrets import validate_telegram_token
 
         problem = validate_telegram_token(token)
         if problem:
@@ -387,8 +387,8 @@ class BootstrapDashboard:
             return
         removed = uninstall_all(self.environ_effective())
         if removed:
-            for item in removed:
-                io.ok(f"removed: {item}")
+            for entry in removed:
+                io.ok(f"removed: {entry}")
         else:
             io.info("nothing to remove")
         io.info("install services with: eurus setup startup")

@@ -360,12 +360,12 @@ def setup_system_packages(install_keys: tuple[str, ...], yes: bool) -> None:
         io.info("cancelled; no system packages were installed")
         return
     failures = 0
-    for item in execute_system_install(plan, confirm=lambda _preview: True):
-        if item.success:
-            io.ok(f"installed {item.key} via: {item.command}")
+    for result in execute_system_install(plan, confirm=lambda _preview: True):
+        if result.success:
+            io.ok(f"installed {result.key} via: {result.command}")
         else:
             failures += 1
-            io.error(f"failed {item.key} (exit {item.returncode}): {item.output_tail}")
+            io.error(f"failed {result.key} (exit {result.returncode}): {result.output_tail}")
     raise SystemExit(1 if failures else 0)
 
 
@@ -408,12 +408,12 @@ def setup_mcp() -> None:
     "telegram", help="Store the Telegram bot token and allowlist in the global .env."
 )
 def setup_telegram() -> None:
+    from eurus.bootstrap.configuration.secrets import validate_telegram_token
     from eurus.bootstrap.integrations.telegram import (
         inspect_telegram,
         save_allowlist,
         save_telegram_token,
         test_telegram_token,
-        validate_telegram_token,
     )
 
     io = _io()
@@ -492,8 +492,8 @@ def setup_startup() -> None:
         if not io.confirm("Remove every eurus service, boot script and cron entry?", False):
             return
         removed = uninstall_all(environ)
-        for item in removed:
-            io.ok(f"removed: {item}")
+        for entry in removed:
+            io.ok(f"removed: {entry}")
         if not removed:
             io.info("nothing to remove")
         return
@@ -523,8 +523,8 @@ def setup_startup() -> None:
         (io.ok if ok else io.warn)(message)
     else:
         created = install_launchers(environ, services)
-        for item in created:
-            io.ok(f"created launcher: {item}")
+        for launcher in created:
+            io.ok(f"created launcher: {launcher}")
         io.info("no autostart mechanism detected; add the launcher to your shell profile")
 
 

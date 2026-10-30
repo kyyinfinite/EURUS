@@ -47,7 +47,7 @@ def chromium_install_hint(manager: PackageManagerInfo) -> str:
     return CHROMIUM_PACKAGE_HINTS.get(manager.name, CHROMIUM_PACKAGE_HINTS["none"])
 
 
-def needs_root(manager: PackageManagerInfo, environ: dict[str, str]) -> bool:
+def needs_root(manager: PackageManagerInfo, environ: dict[str, str] | None = None) -> bool:
     if manager.name == "pkg":
         return False
     return not manager.is_root

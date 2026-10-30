@@ -48,7 +48,8 @@ class BootstrapStore:
         return self.dir / HISTORY_FILE
 
     def load_state(self) -> dict[str, Any]:
-        return _load_json(self.state_path, {})
+        data = _load_json(self.state_path, {})
+        return data if isinstance(data, dict) else {}
 
     def save_state(self, state: dict[str, Any]) -> None:
         state = migrate_state(state)

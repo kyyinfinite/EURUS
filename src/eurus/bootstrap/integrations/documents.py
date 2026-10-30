@@ -60,7 +60,7 @@ def _creation_test() -> tuple[bool, str]:
 
             document = Document()
             document.add_paragraph("eurus bootstrap documents test")
-            document.save(root / "test.docx")
+            document.save(str(root / "test.docx"))
             from openpyxl import Workbook
 
             workbook = Workbook()
@@ -72,7 +72,7 @@ def _creation_test() -> tuple[bool, str]:
             slide = presentation.slides.add_slide(presentation.slide_layouts[6])
             box = slide.shapes.add_textbox(0, 0, 100, 100)
             box.text_frame.text = "eurus"
-            presentation.save(root / "test.pptx")
+            presentation.save(str(root / "test.pptx"))
             created = all(
                 (root / name).is_file() for name in ("test.docx", "test.xlsx", "test.pptx")
             )

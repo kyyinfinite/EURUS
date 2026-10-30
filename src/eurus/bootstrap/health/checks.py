@@ -19,6 +19,7 @@ from eurus.bootstrap.models import (
     READY,
     UNKNOWN,
     CheckResult,
+    ConfigUnset,
     HealthReport,
 )
 from eurus.catalog import resolve_api_key
@@ -412,7 +413,7 @@ def run_checks(
     environ: dict[str, str] | None = None,
     *,
     full: bool = False,
-    config: Config | None | object = CONFIG_UNSET,
+    config: Config | None | ConfigUnset = CONFIG_UNSET,
     config_error: str = "",
 ) -> HealthReport:
     env = dict(os.environ) if environ is None else dict(environ)
@@ -428,32 +429,34 @@ def run_checks(
                     detail=f"check failed: {type(exc).__name__}: {exc}",
                 )
             )
-    if config is CONFIG_UNSET:
-        config = load_config_safe(env)
+    resolved: Config | None = load_config_safe(env) if isinstance(config, ConfigUnset) else config
     try:
-        results.append(check_provider(env, config, config_error))
+        results.append(check_provider(env, resolved, config_error))
     except Exception as exc:
         results.append(
             CheckResult(
                 name="provider", status=UNKNOWN, detail=f"check failed: {type(exc).__name__}: {exc}"
             )
         )
-    for check in (check_browser, check_mcp, check_telegram, check_startup):
+    deferred: tuple[tuple[str, Callable[[], CheckResult]], ...] = (
+        ("check_browser", lambda: check_browser(env, resolved)),
+        ("check_mcp", lambda: check_mcp(env)),
+        ("check_telegram", lambda: check_telegram(env)),
+        ("check_startup", lambda: check_startup(env)),
+    )
+    for name, run in deferred:
         try:
-            if check is check_browser:
-                results.append(check(env, config))
-            else:
-                results.append(check(env))
+            results.append(run())
         except Exception as exc:
             results.append(
                 CheckResult(
-                    name=check.__name__,
+                    name=name,
                     status=UNKNOWN,
                     detail=f"check failed: {type(exc).__name__}: {exc}",
                 )
             )
     if full:
-        results.extend(full_checks(env, config))
+        results.extend(full_checks(env, resolved))
     return HealthReport(results=results)
 
 

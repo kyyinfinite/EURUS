@@ -11,6 +11,7 @@ from rich.text import Text
 
 from eurus.bootstrap.configuration.env_manager import ensure_global_env
 from eurus.bootstrap.configuration.provider_wizard import run_provider_setup
+from eurus.bootstrap.configuration.secrets import validate_telegram_token
 from eurus.bootstrap.dependencies.catalog import FEATURES, feature_status
 from eurus.bootstrap.dependencies.inspector import inspect_all, inspect_core
 from eurus.bootstrap.dependencies.installer import install_targets, upgrade_targets
@@ -28,12 +29,12 @@ from eurus.bootstrap.integrations.telegram import (
     save_allowlist,
     save_telegram_token,
     test_telegram_token,
-    validate_telegram_token,
 )
 from eurus.bootstrap.models import (
     CONFIG_UNSET,
     READY,
     BootstrapError,
+    ConfigUnset,
     HealthReport,
     SkipStep,
 )
@@ -107,11 +108,11 @@ class BootstrapOrchestrator:
         io: BootstrapIO,
         environ: dict[str, str] | None = None,
         home: Path | None = None,
-        config: Config | None | object = CONFIG_UNSET,
+        config: Config | None | ConfigUnset = CONFIG_UNSET,
         config_error: str = "",
     ) -> None:
         self.ctx = BootstrapContext(io, environ, home)
-        if config is not CONFIG_UNSET:
+        if not isinstance(config, ConfigUnset):
             self.ctx.config = config
             self.ctx.config_error = config_error
 

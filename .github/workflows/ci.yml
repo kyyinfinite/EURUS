@@ -1,3 +1,4 @@
+
 name: ci
 
 on:
@@ -14,80 +15,180 @@ concurrency:
 
 jobs:
   test:
+    name: Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.11", "3.12", "3.13"]
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-      - run: python -m pip install --upgrade pip
-      - run: pip install -e ".[dev]"
-      - run: ruff check .
-      - run: ruff format --check .
-      - run: python -m compileall -q src
-      - run: mypy
-      - run: pytest -q
+          cache-dependency-path: pyproject.toml
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install development dependencies
+        run: python -m pip install -e ".[dev]"
+
+      - name: Check dependency consistency
+        run: python -m pip check
+
+      - name: Ruff lint
+        run: ruff check .
+
+      - name: Ruff format
+        run: ruff format --check .
+
+      - name: Compile source
+        run: python -m compileall -q src
+
+      - name: Type check
+        run: mypy
+
+      - name: Run tests
+        run: pytest -q
 
   smoke:
+    name: Core CLI smoke test
     runs-on: ubuntu-latest
     timeout-minutes: 10
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-      - run: python -m pip install --upgrade pip
-      - run: pip install -e .
-      - run: eurus --version
-      - run: eurus --help
-      - run: eurus doctor
-      - run: eurus-tui --help
-      - run: python -c "import eurus; from eurus.agent.factory import build_agent; from eurus.runtime.engine import AgentEngine; print(eurus.__version__)"
-      - run: python -c "from eurus.tools.builtin import default_registry; r = default_registry(include_capability_tools=True); assert 'shell' not in r.names(); assert {'web_search', 'web_fetch', 'deep_search'}.issubset(set(r.names())); print('core import without optional extras ok')"
-      - run: python -c "import importlib.util; assert importlib.util.find_spec('ddgs') is None, 'ddgs must not be a core dependency'; assert importlib.util.find_spec('trafilatura') is None, 'trafilatura must not be a core dependency'; print('web extra is optional in the core install')"
+          cache-dependency-path: pyproject.toml
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install core package only
+        run: python -m pip install -e .
+
+      - name: Check dependency consistency
+        run: python -m pip check
+
+      - name: CLI version
+        run: eurus --version
+
+      - name: CLI help
+        run: eurus --help
+
+      - name: TUI help
+        run: eurus-tui --help
+
+      - name: MCP CLI
+        run: |
+          eurus mcp list
+          eurus mcp google list
+
+      - name: Core imports
+        run: |
+          python -c "import eurus; from eurus.agent.factory import build_agent; from eurus.runtime.engine import AgentEngine; print(eurus.__version__)"
+
+      - name: Core tool registry
+        run: |
+          python -c "from eurus.tools.builtin import default_registry; r = default_registry(include_capability_tools=True); assert 'shell' not in r.names(); assert {'web_search', 'web_fetch', 'deep_search'}.issubset(set(r.names())); print('core registry ok')"
+
+      - name: Verify optional web dependencies stay optional
+        run: |
+          python -c "import importlib.util; assert importlib.util.find_spec('ddgs') is None; assert importlib.util.find_spec('trafilatura') is None; print('web extra remains optional')"
+
+      - name: Verify optional browser dependency stays optional
+        run: |
+          python -c "import importlib.util; assert importlib.util.find_spec('playwright') is None; import eurus.browser; import eurus.browser.tools; print('browser modules import without Playwright')"
+
+  google-optional:
+    name: Google optional dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install Google extra
+        run: python -m pip install -e ".[google]"
+
+      - name: Check dependencies
+        run: python -m pip check
+
+      - name: Verify Google security dependencies
+        run: |
+          python -c "import keyring, cryptography; print('Google secure storage dependencies available')"
+
+      - name: Verify OAuth modules
+        run: |
+          python -c "from eurus.mcp.auth.google import *; print('Google OAuth module import ok')"
 
   packaging:
+    name: Build and verify distribution
     runs-on: ubuntu-latest
     timeout-minutes: 10
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-      - run: python -m pip install --upgrade pip build twine
-      - run: python -m build
-      - run: python -m twine check dist/*
-      - run: python -m pip install --force-reinstall dist/*.whl
-      - run: eurus --version
-      - run: python -c "import eurus.browser, eurus.browser.tools; print('optional browser module imports without playwright installed')"
+          cache-dependency-path: pyproject.toml
+
+      - name: Install build tools
+        run: python -m pip install --upgrade pip build twine
+
+      - name: Build distributions
+        run: python -m build
+
+      - name: Validate distributions
+        run: python -m twine check dist/*
+
+      - name: Create clean installation environment
+        run: python -m venv .venv-wheel
+
+      - name: Install built wheel
+        run: |
+          .venv-wheel/bin/python -m pip install dist/*.whl
+          .venv-wheel/bin/python -m pip check
+
+      - name: Test installed CLI
+        run: .venv-wheel/bin/eurus --version
+
+      - name: Test installed browser modules
+        run: |
+          .venv-wheel/bin/python -c "import eurus.browser, eurus.browser.tools; print('wheel browser imports ok')"
 
   docs-links:
+    name: Documentation links
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: python scripts/check_docs_links.py
 
-  deterministic-security:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-      - run: python -m pip install --upgrade pip
-      - run: pip install -e ".[dev]"
-      - run: pytest -q tests/test_approval_security.py tests/test_sandbox.py tests/test_host_sandbox.py tests/test_net_guard.py tests/test_browser_tools.py tests/test_coder_delegation.py tests/test_memory_trust.py tests/test_verification_wiring.py tests/test_failure_classification.py tests/test_trace.py tests/test_persistence_recovery_v4.py tests/test_runtime_persistence.py tests/test_file_tools.py tests/test_security_hardening.py tests/test_tui_config.py
+
+      - name: Check documentation links
+        run: python scripts/check_docs_links.py

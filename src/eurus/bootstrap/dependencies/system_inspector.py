@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from eurus.bootstrap.dependencies.system_catalog import SYSTEM_PACKAGES, SystemPackage
-from eurus.bootstrap.detection.package_manager import PackageManagerInfo, detect_package_manager
-from eurus.bootstrap.models import UNKNOWN
+from eurus.bootstrap.detection.package_manager import detect_package_manager
+from eurus.bootstrap.models import UNKNOWN, PackageManagerInfo
 
 QUERY_TIMEOUT = 30.0
 
@@ -92,7 +92,7 @@ def _inspect_package(
 ) -> SystemPackageState:
     package_name = item.package_for(manager.name)
     executable_found = _provides_found(item)
-    installed = bool(package_name) and _package_installed(manager, package_name, environ)
+    installed = bool(package_name and _package_installed(manager, package_name, environ))
     available = package_name is not None
     if executable_found or installed:
         status = READY

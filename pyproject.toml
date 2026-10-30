@@ -97,7 +97,7 @@ files = ["src"]
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = ["mcp", "mcp.*", "aiogram", "aiogram.*", "pptx", "pptx.*", "trafilatura", "ddgs", "playwright", "playwright.*", "websockets", "websockets.*", "keyring", "keyring.*", "cryptography", "cryptography.*", "uvicorn", "uvicorn.*"]
+module = ["mcp", "mcp.*", "aiogram", "aiogram.*", "pptx", "pptx.*", "trafilatura", "ddgs", "playwright", "playwright.*", "websockets", "websockets.*", "keyring", "keyring.*", "cryptography", "cryptography.*", "uvicorn", "uvicorn.*", "openpyxl", "openpyxl.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
