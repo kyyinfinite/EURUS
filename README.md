@@ -7,93 +7,134 @@
 <p align="center">
   <strong>An experimental, provider-agnostic AI agent runtime for real work in your terminal.</strong>
   <br>
-  Shell and workspace tools, coding workflows, web research, persistent execution, and optional integrations.
+  Shell and workspace tools · coding workflows · web research · durable execution · MCP · Google Workspace
 </p>
 
 <p align="center">
-  <img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white">
-  <img alt="Pre-alpha" src="https://img.shields.io/badge/status-pre--alpha-orange">
-  <img alt="License MIT" src="https://img.shields.io/badge/license-MIT-blue.svg">
-  <img alt="Async-first" src="https://img.shields.io/badge/runtime-async--first-64748b">
+  <img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=for-the-badge&logo=python&logoColor=white">
+  <img alt="Status" src="https://img.shields.io/badge/status-pre--alpha-orange?style=for-the-badge">
+  <img alt="License MIT" src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge">
+  <img alt="Termux ready" src="https://img.shields.io/badge/Termux-first-000000?style=for-the-badge&logo=android&logoColor=3DDC84">
+  <img alt="MCP native" src="https://img.shields.io/badge/MCP-client%20%2B%20server-6E56CF?style=for-the-badge">
 </p>
 
 <p align="center">
-  <a href="#what-is-eurus">Overview</a> ·
-  <a href="#capabilities">Capabilities</a> ·
-  <a href="#quick-start">Quick start</a> ·
-  <a href="#architecture">Architecture</a> ·
-  <a href="#safety-model">Safety</a> ·
-  <a href="#documentation">Docs</a>
+  <a href="#-overview">Overview</a> ·
+  <a href="#-architecture">Architecture</a> ·
+  <a href="#-google-workspace-built-in-mcp">Google Workspace</a> ·
+  <a href="#-quick-start">Quick start</a> ·
+  <a href="#-terminal-ui">Terminal UI</a> ·
+  <a href="#-safety-model">Safety</a> ·
+  <a href="#-documentation">Docs</a>
 </p>
 
 > [!WARNING]
-> **Eurus is pre-alpha software.** APIs, configuration, persistence schemas, and behavior may change without notice. Expect rough edges. Do not rely on it for critical or unattended production work, and review every proposed or executed change.
+> **Eurus is pre-alpha software.** APIs, configuration, persistence schemas, and behavior may change without notice. Do not rely on it for critical or unattended production work, and review every proposed or executed change.
 
-## What is Eurus?
+---
 
-Eurus is an async-first Python agent runtime that connects language models to tools and repeatable workflows. It is designed to do more than answer a prompt: an agent can plan a task, call tools, inspect results, make follow-up decisions, and report what it could verify.
+## ✨ Overview
 
-Eurus is provider-agnostic. It supports several model-provider protocols and OpenAI-compatible endpoints, with configurable fallback chains. The runtime includes a terminal interface, workspace-oriented coding tools, web research, SQLite-backed execution records, and optional integrations such as Telegram and MCP.
+Eurus is an async-first Python agent runtime that connects language models to tools and repeatable workflows. An agent can plan a task, call tools, inspect the results, make follow-up decisions, and report what it was actually able to verify.
 
-The project is being developed with small servers and Android Termux in mind. Optional integrations should remain optional; the core is not designed to require Docker or a native compilation toolchain.
+- **Provider-agnostic.** OpenAI-compatible endpoints, Anthropic, Gemini, and optional official Groq / Google GenAI SDKs, with configurable fallback chains.
+- **Durable by design.** Every run goes through one execution boundary (`AgentEngine`) backed by SQLite: events, tool attempts, checkpoints, recovery.
+- **Native MCP platform.** Eurus is both an MCP **client** and an MCP **server**, and ships a **built-in Google Workspace provider**.
+- **Built for small machines.** Android Termux and small VPS instances are first-class targets. No Docker, vector database or native compiler is required.
 
-## Capabilities
+### Capabilities at a glance
 
 | Area | What is included |
 |---|---|
-| **Model providers** | OpenAI-compatible APIs, Anthropic, Gemini REST, and optional official Groq and Google GenAI SDK integrations |
-| **Agent execution** | Async tool-calling loop, bounded iterations, timeouts, retry/fallback handling, and interruption support |
-| **Coding workflows** | Workspace inspection, guarded file operations, patch proposals, validation tools, and multi-file workflows |
-| **Runtime durability** | `AgentEngine`, SQLite-backed run/event/tool-attempt/job stores, checkpoints, task-state snapshots, and recovery classification |
-| **Verification** | Step and completion checks that distinguish supported results from unverified claims; criteria-aware step verification |
-| **Safety controls** | Approval hooks for mutating tools, workspace/path controls, action journaling, network guards, and redaction |
-| **Memory and sessions** | Local SQLite session history, FTS5 keyword search, trust-tiered memory, and budgeted memory injection into prompts |
-| **Research and browser** | Web search/fetch tools; snapshot-driven browser automation with a pure-Python CDP backend (Termux-first) and an optional Playwright backend |
-| **Extensibility** | Custom tools, validated skill learning with quarantined drafts and owner-approved promotion, native MCP platform (client + server + Google Workspace with OAuth 2.0), document workflows, and Telegram gateway |
-| **Terminal UI** | CLI and interactive TUI with themes, model selection, and runtime feedback |
+| 🧠 **Model providers** | OpenAI, Anthropic, Gemini, Groq, NVIDIA NIM, OpenRouter, DeepSeek, Mistral, Together, xAI, Ollama, plus any OpenAI-compatible endpoint |
+| 🔁 **Agent execution** | Async tool-calling loop, bounded iterations, timeouts, retry / fallback, cancellation, resume |
+| 🛠️ **Coding workflows** | Workspace inspection, guarded file operations, patch proposals, validation, git tools, undo, multi-file workflows |
+| 🗄️ **Runtime durability** | SQLite run / event / tool-attempt / job stores, checkpoints, task-state snapshots, recovery classification |
+| ✅ **Verification** | Step and completion checks that separate supported results from unverified claims |
+| 🔐 **Safety controls** | Fail-closed approval for mutating tools, path controls, action journal, network guard, secret redaction |
+| 💾 **Memory & sessions** | Session history, FTS5 keyword search, trust-tiered memory, budgeted prompt injection |
+| 🌐 **Research & browser** | Web search / fetch, snapshot-driven browser automation (pure-Python CDP for Termux, optional Playwright) |
+| 🧩 **Extensibility** | Custom tools, validated skill learning (quarantine → owner-approved promotion), sub-agent delegation, Telegram gateway, scheduler |
+| 🔌 **MCP** | External MCP servers (stdio / HTTP), Eurus as an MCP server, and **9 built-in Google Workspace services** |
+| 📄 **Documents** | DOCX / XLSX / PPTX creation and editing workflows |
+| 🎨 **Terminal UI** | Interactive TUI with 9 built-in themes, font support, glyph sets, model picker and slash commands |
 
-Availability and maturity vary by feature. See the [roadmap](docs/ROADMAP.md) and the relevant module documentation before relying on a specific workflow.
+---
 
-## Architecture
+## 🧱 Architecture
 
-Production task execution is intended to converge on one durable execution boundary: `AgentEngine` in `src/eurus/runtime/engine.py`. Entry points and interfaces may differ, but the runtime lifecycle is shared.
+All entry points converge on one durable execution boundary. Tool calls always pass through the same approval and execution boundary, whether they come from a built-in tool, an external MCP server or Google Workspace.
 
 ```mermaid
-flowchart TD
-    USER["User / Scheduled Trigger"] --> ENTRY{"Entry point"}
-    ENTRY --> CLI["CLI: run / chat"]
-    ENTRY --> TUI["Terminal UI"]
-    ENTRY --> TG["Telegram gateway"]
-    ENTRY --> SCHED["Scheduler"]
-    CLI --> ENGINE["AgentEngine"]
+flowchart TB
+    subgraph IF["Interfaces"]
+        CLI["CLI<br/>ask · run · chat"]
+        TUI["Terminal UI<br/>eurus-tui"]
+        TG["Telegram gateway"]
+        SCH["Scheduler"]
+        EXT["External MCP clients<br/>IDEs · other agents"]
+    end
+
+    subgraph CORE["Runtime core"]
+        ENGINE["AgentEngine<br/>plan · budget · checkpoint"]
+        LOOP["Agent loop<br/>tool calling · verification"]
+        ROUTER["Provider router<br/>fallback · cooldown · retry"]
+        BOUNDARY["ToolExecutionBoundary<br/>approval · journal · redaction"]
+    end
+
+    subgraph LLM["Model providers"]
+        P1["OpenAI-compatible<br/>OpenAI · Groq · NVIDIA · OpenRouter · Ollama"]
+        P2["Anthropic"]
+        P3["Gemini"]
+    end
+
+    subgraph TOOLS["Tools and integrations"]
+        T1["Shell and workspace<br/>coding · git · patch · undo"]
+        T2["Web and browser<br/>search · fetch · CDP / Playwright"]
+        T3["Documents<br/>DOCX · XLSX · PPTX"]
+        T4["Memory and skills<br/>FTS5 · learned skills"]
+        T5["Sub-agents<br/>delegation · graph scheduler"]
+    end
+
+    subgraph MCP["MCP platform"]
+        RT["MCPRuntime<br/>one manager and policy per process"]
+        ES["External MCP servers<br/>stdio · streamable HTTP"]
+        GW["Google Workspace provider<br/>9 built-in services"]
+    end
+
+    STORE[("SQLite stores<br/>runs · events · attempts · jobs · memory")]
+
+    CLI --> ENGINE
     TUI --> ENGINE
     TG --> ENGINE
-    SCHED --> ENGINE
+    SCH --> ENGINE
+    EXT -->|"allowlist"| BOUNDARY
 
-    ENGINE --> PLAN["Plan and budget"]
-    PLAN --> LOOP["Agent loop"]
-    LOOP --> BOUNDARY["ToolExecutionBoundary"]
-    BOUNDARY --> TOOLS["Tools and integrations"]
-    TOOLS --> OBSERVE["Observe tool results"]
-    OBSERVE --> VERIFY["Verify evidence"]
-    VERIFY -->|Sufficient evidence| REPORT["Persist result and report"]
-    VERIFY -->|Incomplete / failed| RECOVER["Replan or recover"]
-    RECOVER --> PLAN
+    ENGINE --> LOOP
+    LOOP <--> ROUTER
+    ROUTER --> P1
+    ROUTER --> P2
+    ROUTER --> P3
+    LOOP --> BOUNDARY
+    BOUNDARY --> TOOLS
+    BOUNDARY --> RT
+    RT --> ES
+    RT --> GW
+    ENGINE <--> STORE
 
-    ENGINE <--> STORE[("SQLite runtime stores")]
-    BOUNDARY --> APPROVAL{"Approval required?"}
-    APPROVAL -->|Approved| TOOLS
-    APPROVAL -->|Denied / unavailable| DENY["Do not execute mutation"]
-
-    classDef main fill:#e8eef5,stroke:#64748b,color:#172033
+    classDef iface fill:#e8eef5,stroke:#64748b,color:#172033
+    classDef core fill:#e0f2fe,stroke:#0284c7,color:#0c2d48
     classDef secure fill:#fff0d8,stroke:#b7791f,color:#38240a
-    classDef success fill:#e1f5e8,stroke:#27824b,color:#123b23
-    class ENGINE,PLAN,LOOP,OBSERVE,VERIFY main
-    class BOUNDARY,APPROVAL,DENY secure
-    class REPORT,STORE success
+    classDef store fill:#e1f5e8,stroke:#27824b,color:#123b23
+    classDef google fill:#fce8e6,stroke:#ea4335,color:#3b0d0a
+    class CLI,TUI,TG,SCH,EXT iface
+    class ENGINE,LOOP,ROUTER core
+    class BOUNDARY secure
+    class STORE store
+    class GW google
 ```
 
-### Execution lifecycle
+### Run lifecycle
 
 ```mermaid
 stateDiagram-v2
@@ -115,18 +156,157 @@ stateDiagram-v2
     CANCELLED --> [*]
 ```
 
-The runtime includes explicit run states, budget tracking, event persistence, tool-attempt records, verification outcomes, and recovery checks. A persisted status is not by itself proof that the underlying task was successful; inspect the evidence and trace when evaluating a run.
+A persisted status is not by itself proof that a task succeeded: inspect the evidence and trace (`eurus trace <run_id>`). Details: [Architecture and Execution Flow](docs/ARCHITECTURE.md).
 
-See [Architecture and Execution Flow](docs/ARCHITECTURE.md) for implementation details.
+---
 
-## Quick start
+## 🔌 Google Workspace (built-in MCP)
+
+Eurus ships a native provider for Google's official Workspace MCP servers. There is nothing to clone or run locally: Eurus connects to Google's managed endpoints and authenticates with your own Google account through OAuth 2.0.
+
+<p align="center">
+  <img alt="Gmail" src="https://img.shields.io/badge/Gmail-EA4335?style=for-the-badge&logo=gmail&logoColor=white">
+  <img alt="Google Drive" src="https://img.shields.io/badge/Drive-4285F4?style=for-the-badge&logo=googledrive&logoColor=white">
+  <img alt="Google Docs" src="https://img.shields.io/badge/Docs-4285F4?style=for-the-badge&logo=googledocs&logoColor=white">
+  <img alt="Google Sheets" src="https://img.shields.io/badge/Sheets-34A853?style=for-the-badge&logo=googlesheets&logoColor=white">
+  <img alt="Google Slides" src="https://img.shields.io/badge/Slides-F9AB00?style=for-the-badge&logo=googleslides&logoColor=white">
+</p>
+<p align="center">
+  <img alt="Google Calendar" src="https://img.shields.io/badge/Calendar-4285F4?style=for-the-badge&logo=googlecalendar&logoColor=white">
+  <img alt="Google Chat" src="https://img.shields.io/badge/Chat-00AC47?style=for-the-badge&logo=googlechat&logoColor=white">
+  <img alt="Google People" src="https://img.shields.io/badge/People-4285F4?style=for-the-badge&logo=google&logoColor=white">
+  <img alt="Google Classroom" src="https://img.shields.io/badge/Classroom-0F9D58?style=for-the-badge&logo=googleclassroom&logoColor=white">
+</p>
+
+> [!NOTE]
+> The Google Workspace MCP servers are part of Google's **Developer Preview Program**. Availability, tool sets and verification requirements may change, and not every Google account or project has access to every service. Eurus reports per-service connection errors instead of failing the whole MCP stack.
+
+### Supported services
+
+All nine services are included but **disabled by default**. Only the scopes of the services you enable are requested at login.
+
+| Service | What the agent can do | Notes |
+|---|---|---|
+| <img alt="Gmail" src="https://img.shields.io/badge/-Gmail-EA4335?logo=gmail&logoColor=white"> | Search and read threads, create drafts, send messages | Send / delete always need explicit approval |
+| <img alt="Drive" src="https://img.shields.io/badge/-Drive-4285F4?logo=googledrive&logoColor=white"> | Search and read files, write files the app creates | `drive.readonly` + per-file `drive.file` |
+| <img alt="Docs" src="https://img.shields.io/badge/-Docs-4285F4?logo=googledocs&logoColor=white"> | Read and edit documents | Drive scopes + Docs scopes |
+| <img alt="Sheets" src="https://img.shields.io/badge/-Sheets-34A853?logo=googlesheets&logoColor=white"> | Read and edit spreadsheets | Drive scopes + Sheets scopes |
+| <img alt="Slides" src="https://img.shields.io/badge/-Slides-F9AB00?logo=googleslides&logoColor=white"> | Read and edit presentations | Drive scopes + Slides scopes |
+| <img alt="Calendar" src="https://img.shields.io/badge/-Calendar-4285F4?logo=googlecalendar&logoColor=white"> | Calendar list, free/busy, events (read) | Read-oriented scopes |
+| <img alt="Chat" src="https://img.shields.io/badge/-Chat-00AC47?logo=googlechat&logoColor=white"> | Read spaces, memberships and messages; post messages | Needs a Chat app; Workspace accounts only |
+| <img alt="People" src="https://img.shields.io/badge/-People-4285F4?logo=google&logoColor=white"> | Directory and contacts lookup | `directory.readonly`, `contacts.readonly` |
+| <img alt="Classroom" src="https://img.shields.io/badge/-Classroom-0F9D58?logo=googleclassroom&logoColor=white"> | Courses and coursework | Needs Workspace for Education |
+
+Exact endpoints and OAuth scopes per service are listed in [Google Workspace Services](docs/GOOGLE_WORKSPACE.md).
+
+### How it fits together
+
+```mermaid
+flowchart LR
+    USER["You<br/>CLI · TUI · Telegram"] --> AGENT["Eurus agent"]
+    AGENT --> BOUNDARY["Execution boundary<br/>risk policy · approval"]
+    BOUNDARY --> RT["MCPRuntime"]
+
+    subgraph AUTHN["Authentication"]
+        OAUTH["OAuth 2.0 + PKCE<br/>loopback callback"]
+        TOKENS["Token store<br/>OS keyring or encrypted file"]
+    end
+
+    RT --> PROV["Google Workspace provider<br/>mcp_google_service_tool"]
+    OAUTH --> TOKENS
+    TOKENS --> PROV
+
+    subgraph GOOGLE["Google managed MCP endpoints"]
+        G1["Gmail"]
+        G2["Drive"]
+        G3["Docs"]
+        G4["Sheets"]
+        G5["Slides"]
+        G6["Calendar"]
+        G7["Chat"]
+        G8["People"]
+        G9["Classroom"]
+    end
+
+    PROV --> G1
+    PROV --> G2
+    PROV --> G3
+    PROV --> G4
+    PROV --> G5
+    PROV --> G6
+    PROV --> G7
+    PROV --> G8
+    PROV --> G9
+
+    classDef secure fill:#fff0d8,stroke:#b7791f,color:#38240a
+    classDef google fill:#e8f0fe,stroke:#4285f4,color:#0b2a5b
+    class BOUNDARY,OAUTH,TOKENS secure
+    class G1,G2,G3,G4,G5,G6,G7,G8,G9 google
+```
+
+### Risk-aware by default
+
+Google tools are discovered live from each endpoint (nothing is hard-coded) and named `mcp_google_<service>_<tool>`, for example `mcp_google_gmail_search_threads`. Each tool is classified by risk:
+
+| Risk class | Example | Approval |
+|---|---|---|
+| `read_only` | `search_threads` | Runs without a prompt |
+| `reversible_write` | `create_draft` | Requires approval |
+| `sensitive_mutation` | `send_message` | Always requires explicit approval |
+| `destructive` | `delete_thread` | Always requires explicit approval |
+
+Sensitive and destructive approvals cannot be disabled. Everything returned by remote MCP servers (emails, documents, chat messages) is wrapped in an untrusted-content guard: it is treated as data, never as instructions. A failing service never disconnects the others; if one account's refresh token is revoked, only that account moves to `reauth_required`.
+
+### Enable it in four steps
+
+```bash
+# 1. In Google Cloud: create a Desktop OAuth client and enable the MCP services you need
+#    (full walkthrough: docs/GOOGLE_OAUTH.md)
+
+# 2. Provide the client credentials
+export EURUS_GOOGLE_CLIENT_ID="..."
+export EURUS_GOOGLE_CLIENT_SECRET="..."
+
+# 3. Enable the services you want in Eurus
+eurus mcp google list
+eurus mcp google enable gmail
+eurus mcp google enable drive
+
+# 4. Sign in and verify
+eurus auth google login
+eurus mcp google status
+eurus mcp google test
+```
+
+Useful extras: `eurus auth google accounts` / `use` to switch between accounts, `eurus mcp doctor` for diagnostics, and `pip install -e ".[google]"` for keyring and encrypted token storage (set `EURUS_GOOGLE_TOKEN_PASSPHRASE` where no OS keyring exists, such as Termux or headless servers).
+
+Guides: [Google OAuth Setup](docs/GOOGLE_OAUTH.md) · [Google Workspace Services](docs/GOOGLE_WORKSPACE.md) · [MCP Integration](docs/MCP.md) · [MCP Security](docs/MCP_SECURITY.md) · [Troubleshooting](docs/TROUBLESHOOTING.md)
+
+### Beyond Google: any MCP server
+
+```bash
+eurus mcp add-stdio filesystem python server.py   # local process
+eurus mcp add-http   myserver https://example.com/mcp
+eurus mcp test
+```
+
+External MCP tools are registered as mutating and approval-required by default. Eurus can also **expose its own tools** to other MCP clients, with an explicit allowlist and bearer-token auth for HTTP:
+
+```bash
+eurus mcp server start --transport stdio --tool read_file
+```
+
+See [Eurus MCP Server](docs/MCP_SERVER.md).
+
+---
+
+## 🚀 Quick start
 
 ### Requirements
 
-- Python 3.11 or newer
-- Git
-- An API key for the provider/model you intend to use
-- Network access for remote model providers and web research
+- Python 3.11 or newer and Git
+- An API key for the model provider you plan to use
+- Network access for remote providers and web research
 
 ### Install from source
 
@@ -145,83 +325,55 @@ cp .env.example .env
 
 ### Bootstrap the environment (recommended)
 
-Instead of configuring everything by hand, let the built-in environment manager do it. It detects your platform (Termux, Debian/Ubuntu proot, native Linux, containers/VPS), installs the feature extras you pick, writes the global `~/.eurus/` layout, configures a provider, and verifies the result:
+The built-in environment manager detects your platform (Termux, Debian/Ubuntu proot, native Linux, containers / VPS), installs the extras you pick, writes the global `~/.eurus/` layout, configures a provider and verifies the result.
 
 ```bash
-eurus bootstrap --check              # read-only inspection of the current environment
-eurus bootstrap                      # interactive dashboard (12 modules)
-eurus bootstrap --quick              # guided end-to-end setup (safe defaults in scripts)
-eurus bootstrap --repair             # show a repair plan, confirm, apply
-eurus doctor                         # health report; --full adds live probes
-eurus setup provider|browser|mcp|telegram|startup|config
+eurus bootstrap --check     # read-only inspection
+eurus bootstrap             # interactive dashboard
+eurus bootstrap --quick     # guided end-to-end setup
+eurus bootstrap --repair    # show a repair plan, confirm, apply
+eurus doctor                # health report (--full adds live probes)
 ```
 
-Everything bootstrap changes lives under `~/.eurus/` (0700, secrets 0600), is backed up before repair, and is recorded in `~/.eurus/bootstrap/state.json`. See [BOOTSTRAP_ARCHITECTURE.md](BOOTSTRAP_ARCHITECTURE.md), [BOOTSTRAP_IMPLEMENTATION.md](BOOTSTRAP_IMPLEMENTATION.md), [BOOTSTRAP_COMPATIBILITY.md](BOOTSTRAP_COMPATIBILITY.md) and [BOOTSTRAP_TEST_REPORT.md](BOOTSTRAP_TEST_REPORT.md); sample files live in [examples/bootstrap/](examples/bootstrap).
+Everything bootstrap changes lives under `~/.eurus/` (directory `0700`, secrets `0600`), is backed up before repair, and is recorded in `~/.eurus/bootstrap/state.json`. Sample files: [`examples/bootstrap/`](examples/bootstrap).
 
-Add your provider key to `~/.eurus/.env` or export it in your shell. For example:
+### First run
 
 ```bash
-export GROQ_API_KEY="your-key"
+export GROQ_API_KEY="your-key"       # or add it to ~/.eurus/.env
 eurus doctor
-eurus providers
-```
-
-Do not commit `.env` or real credentials.
-
-### Ask a model
-
-```bash
-eurus ask --model groq/llama-3.3-70b-versatile \
-  "Explain what a mutex is in three sentences."
-```
-
-### Run an agent task
-
-```bash
+eurus ask --model groq/llama-3.3-70b-versatile "Explain what a mutex is in three sentences."
 eurus run "Inspect this project and summarize its structure."
-```
-
-### Start an interactive chat
-
-```bash
 eurus chat
-```
-
-### Launch the terminal UI
-
-```bash
 eurus-tui
 ```
 
-Exact provider/model availability depends on your provider account and configuration. Model IDs in examples are illustrative and may need to be changed.
+Model IDs in examples are illustrative; availability depends on your provider account. Never commit `.env` or real credentials.
 
-## Configure providers
+### Configure providers
 
-Eurus uses `provider/model` identifiers. Provider credentials should be supplied through environment variables rather than checked into config files.
+Eurus uses `provider/model` identifiers. Built-in provider entries:
 
-Useful commands:
-
-```bash
-eurus config init
-eurus config show
-eurus config path
-eurus providers
-eurus doctor
-eurus diagnose
-```
-
-Example provider configuration:
+<p>
+  <img alt="OpenAI" src="https://img.shields.io/badge/OpenAI-412991?style=flat-square&logo=openai&logoColor=white">
+  <img alt="Anthropic" src="https://img.shields.io/badge/Anthropic-D97757?style=flat-square&logo=anthropic&logoColor=white">
+  <img alt="Gemini" src="https://img.shields.io/badge/Gemini-8E75B2?style=flat-square&logo=googlegemini&logoColor=white">
+  <img alt="Groq" src="https://img.shields.io/badge/Groq-F55036?style=flat-square">
+  <img alt="NVIDIA" src="https://img.shields.io/badge/NVIDIA%20NIM-76B900?style=flat-square&logo=nvidia&logoColor=white">
+  <img alt="OpenRouter" src="https://img.shields.io/badge/OpenRouter-6467F2?style=flat-square">
+  <img alt="DeepSeek" src="https://img.shields.io/badge/DeepSeek-4D6BFE?style=flat-square">
+  <img alt="Mistral" src="https://img.shields.io/badge/Mistral-FA520F?style=flat-square&logo=mistralai&logoColor=white">
+  <img alt="Together" src="https://img.shields.io/badge/Together-0F6FFF?style=flat-square">
+  <img alt="xAI" src="https://img.shields.io/badge/xAI-000000?style=flat-square&logo=x&logoColor=white">
+  <img alt="Ollama" src="https://img.shields.io/badge/Ollama-000000?style=flat-square&logo=ollama&logoColor=white">
+</p>
 
 ```toml
 [providers.myhost]
 protocol = "openai"
 base_url = "https://example.com/v1"
 api_key_env = "MYHOST_API_KEY"
-```
 
-A simple model and fallback configuration can look like this:
-
-```toml
 [agent]
 model = "groq/llama-3.3-70b-versatile"
 fallback = ["gemini/gemini-2.0-flash"]
@@ -231,16 +383,90 @@ iteration_budget = 100
 timeout_seconds = 120.0
 max_retries = 3
 local_only = false
-cooldown_seconds = 30.0
-retry_jitter = 0.0
-first_token_seconds = 0
 ```
 
-Configuration precedence, provider protocols, SDK extras, and troubleshooting are documented in [Provider Configuration](docs/PROVIDERS.md).
+```bash
+eurus config init && eurus config show && eurus providers && eurus diagnose
+```
 
-## Use Eurus on Termux
+More in [Provider Configuration](docs/PROVIDERS.md).
 
-Eurus aims to keep its core dependency footprint practical for Android Termux and small Linux servers. Platform support still depends on the tools and integrations selected.
+### Optional extras
+
+```bash
+pip install -e ".[web]"          # web search and fetch (ddgs + trafilatura)
+pip install -e ".[google]"       # keyring + encrypted token storage for Google OAuth
+pip install -e ".[telegram]"     # Telegram gateway
+pip install -e ".[browser]"      # Playwright backend (PC / VPS)
+pip install -e ".[browser-cdp]"  # raw CDP backend (Termux-friendly)
+pip install -e ".[documents]"    # DOCX / XLSX / PPTX workflows
+pip install -e ".[groq]"         # official Groq SDK
+pip install -e ".[genai]"        # Google GenAI SDK
+```
+
+Browser automation needs a Chromium binary: `playwright install chromium` on PC / VPS, or `pkg install x11-repo && pkg install chromium` on Termux. See [Browser Automation](docs/BROWSER.md).
+
+---
+
+## 💻 Terminal UI
+
+`eurus-tui` is an interactive terminal interface with a model picker, themes, fonts and slash commands.
+
+| Command | Purpose |
+|---|---|
+| `/model` · `/models` · `/provider` | Switch model, list choices, show credential status |
+| `/theme` · `/font` · `/glyphs` | Colors, terminal font, icon set (`unicode`, `ascii`, `nerd`, `auto`) |
+| `/sessions` · `/resume` | Browse and resume saved conversations |
+| `/tools` · `/skills` · `/memory` | Inspect registered tools, skills and memory |
+| `/browser` · `/grants` | Browser runtime and permission grants |
+| `/status` · `/config` · `/workspace` · `/settings` | Session, config and interface settings |
+| `/compact` · `/retry` · `/undo` · `/clear` · `/exit` | Context, retry, restore files from the last run, housekeeping |
+
+**Built-in themes:** `eurus` · `midnight` · `paper` · `mono` · `nord` · `dracula` · `gruvbox` · `tokyo-night` · `catppuccin`. Each theme suggests a matching font, and both stay customizable. Create your own with `eurus theme new`, apply with `eurus theme use`.
+
+**Fonts:** drop `.ttf` / `.otf` files into `src/eurus/tui/assets/fonts/` to bundle them, or install from the catalog with `/font install`. See the folder's [README](src/eurus/tui/assets/fonts/README.md).
+
+---
+
+## 🔒 Safety model
+
+Eurus includes safety mechanisms, but they do not make an autonomous agent risk-free.
+
+```mermaid
+flowchart LR
+    CALL["Tool call"] --> VALID["Schema validation"]
+    VALID --> MUT{"Mutating or<br/>approval required?"}
+    MUT -->|"No"| RUN["Execute"]
+    MUT -->|"Yes"| APPR{"Approver<br/>available?"}
+    APPR -->|"Approved"| RUN
+    APPR -->|"Denied or none"| DENY["Fail closed:<br/>no execution"]
+    RUN --> RED["Redact secrets"]
+    RED --> JOURNAL["Journal and persist<br/>attempt and outcome"]
+
+    classDef secure fill:#fff0d8,stroke:#b7791f,color:#38240a
+    classDef ok fill:#e1f5e8,stroke:#27824b,color:#123b23
+    classDef bad fill:#fce8e6,stroke:#ea4335,color:#3b0d0a
+    class MUT,APPR secure
+    class RUN,JOURNAL ok
+    class DENY bad
+```
+
+- **Approval-gated mutations.** If no approver is available, the boundary denies the operation.
+- **Guarded workspace.** File operations are constrained and stale patches are detected.
+- **Execution records.** Tool attempts are written ahead of execution so partial or uncertain operations can be diagnosed.
+- **Recovery caution.** Unresolved side effects are classified before a run resumes; tasks that may already have changed external state are not blindly replayed.
+- **Network guard.** Non-HTTP(S) schemes and local / private destinations are rejected on the guarded path.
+- **Untrusted content.** Remote MCP output and fetched web pages are treated as data, not instructions.
+- **Secret redaction.** Event payloads are redacted before persistence; Google tokens live in the OS keyring or an encrypted file.
+
+> [!IMPORTANT]
+> On Termux there is no container runtime, so Eurus uses the non-isolated host backend (`sandbox.required = false`). Commands run on the host and the approval gate is the only control before execution. Use this mode only if you can review approvals carefully.
+
+These controls are defense in depth, not a security certification. Test in a disposable workspace, keep backups, and never give an experimental agent unrestricted access to secrets or production infrastructure. Report vulnerabilities privately per [SECURITY.md](SECURITY.md).
+
+---
+
+## 📱 Eurus on Termux
 
 ```bash
 pkg install python git
@@ -249,102 +475,88 @@ pip install -e .
 eurus doctor
 ```
 
-Termux does not provide a Docker-style container runtime by default, so Eurus defaults to the non-isolated host backend with `sandbox.required = false` there. Commands run on the host and are **not isolated by a container**; the approval gate is the only control before execution. Use this mode only when you understand the implications and can review approvals carefully.
+`eurus bootstrap` detects Termux automatically, and `eurus setup startup` can install a Termux:Boot script. Browser automation uses the raw CDP backend, so Playwright is not needed.
 
-See the Termux notes in the project documentation before enabling shell execution.
+---
 
-## Safety model
-
-Eurus includes safety mechanisms, but these do not make an autonomous agent risk-free.
-
-- **Approval-gated mutations:** tools marked as mutating or approval-required are routed through an approval boundary. If no approver is available, the boundary is designed to deny the operation.
-- **Guarded workspace operations:** coding tools include checks intended to constrain file operations and detect stale patches.
-- **Execution records:** tool attempts and outcomes can be recorded to help diagnose partial or uncertain operations.
-- **Recovery caution:** unresolved side effects should be classified before resuming a run; do not blindly replay a task that may already have changed external state.
-- **Network restrictions:** guarded URL handling rejects non-HTTP(S) schemes and blocks local/private destinations where the guarded network path is used.
-- **Secret redaction:** runtime event payloads pass through redaction before persistence.
-
-These controls are defense-in-depth, not a security certification. Review the code, test it in a disposable workspace, and keep backups before allowing the agent to modify valuable files or use external services. Never give an experimental agent unrestricted access to secrets or production infrastructure.
-
-Report security concerns privately according to [SECURITY.md](SECURITY.md).
-
-## Useful commands
+## 📟 Command reference
 
 | Command | Purpose |
 |---|---|
-| `eurus ask ...` | Send a one-shot prompt to a model |
-| `eurus run ...` | Run an agent task |
-| `eurus chat` | Interactive conversation with persistent session support |
-| `eurus-tui` | Launch the terminal UI |
-| `eurus gateway web` | Local web gateway for the same agent runtime (see [Web Gateway](docs/WEB_GATEWAY.md)) |
-| `eurus providers` | List configured provider options |
-| `eurus doctor` | Check local setup (`--full` for live probes, `--repair` to fix) |
-| `eurus bootstrap` | Environment dashboard; `--quick/--check/--repair/--update` |
-| `eurus setup provider` | Configure provider, API key and default model |
-| `eurus setup browser` | Detect browser runtimes and self-test the backend |
-| `eurus setup mcp` | Validate and test `~/.eurus/mcp.json` |
-| `eurus setup telegram` | Store the bot token and allowlist (0600) |
-| `eurus setup startup` | Install/remove autostart (systemd, Termux:Boot, cron) |
-| `eurus diagnose` | Diagnose provider/model connectivity |
-| `eurus sessions list` | List saved sessions |
-| `eurus memory search "query"` | Search stored memory |
-| `eurus skills list` | List quarantined skill drafts learned from tasks |
-| `eurus skills promote NAME --yes --outcome ...` | Validate and install a learned skill with owner approval |
-| `eurus skills patch NAME --content-file F` | Update an installed skill with a versioned backup |
-| `eurus eval --compare-learning` | Run the eval suite with lessons off/on and report regressions |
-| `eurus trace <run_id>` | Inspect a redacted runtime timeline |
-| `eurus inspect` | Inspect run details |
-| `eurus history` | Review previous runs |
-| `eurus events` | Examine persisted events |
-| `eurus metrics` | Display runtime metrics |
+| `eurus ask` · `run` · `chat` | One-shot prompt, agent task, interactive chat |
+| `eurus-tui` (`eurus tui`) | Terminal UI |
+| `eurus providers` · `diagnose` | Provider catalog and connectivity diagnosis |
+| `eurus doctor` | Health check (`--full`, `--repair`) |
+| `eurus bootstrap` | Environment manager (`--check`, `--quick`, `--repair`, `--update`) |
+| `eurus setup provider\|browser\|mcp\|telegram\|startup\|config` | Configure one component |
+| `eurus config init\|show\|path` | Configuration file |
+| `eurus mcp list\|add-stdio\|add-http\|test\|remove\|tools\|doctor\|permissions` | External MCP servers and policy |
+| `eurus mcp google list\|enable\|disable\|status\|test` | Built-in Google Workspace services |
+| `eurus auth google login\|logout\|status\|accounts\|use` | Google OAuth accounts |
+| `eurus mcp server start\|tools` | Expose Eurus tools over MCP |
+| `eurus browser start\|stop\|status\|test\|login\|config` | Browser runtime |
+| `eurus gateway telegram\|status\|prune` | Telegram gateway |
+| `eurus schedule add\|list\|enable\|disable\|daemon\|history` | Scheduled tasks |
+| `eurus sessions list\|show\|summarize\|delete` | Saved sessions |
+| `eurus memory add\|list\|search\|update\|promote\|quarantine\|delete` | Long-lived memory |
+| `eurus skills list\|show\|validate\|promote\|patch` | Learned and built-in skills |
+| `eurus theme list\|use\|new\|path` · `eurus font ...` | TUI appearance |
+| `eurus trace` · `inspect` · `history` · `events` · `metrics` | Observability |
+| `eurus resume` · `cancel` · `undo` | Run control |
+| `eurus eval` · `benchmark` | Deterministic evaluation suite |
+| `eurus privacy export\|purge` | Export or remove local data |
 
-Use `eurus --help`, `eurus <command> --help`, and `eurus-tui --help` for the commands available in your installed version.
+Use `eurus --help` and `eurus <command> --help` for what your installed version supports.
 
-## Optional integrations
+---
 
-Install only the extras you need:
+## 📁 Project layout
 
-```bash
-pip install -e ".[web]"      # Web search and fetch (ddgs + trafilatura)
-pip install -e ".[mcp]"        # Model Context Protocol
-pip install -e ".[telegram]"   # Telegram gateway
-pip install -e ".[browser]"    # Browser automation via Playwright (PC/VPS)
-pip install -e ".[browser-cdp]" # Browser automation via raw CDP (Termux-friendly)
-pip install -e ".[documents]"  # Office/document workflows
-pip install -e ".[groq]"       # Official Groq SDK
-pip install -e ".[genai]"      # Google GenAI SDK
+```text
+eurus/
+├── src/eurus/
+│   ├── runtime/        AgentEngine, state machine, budgets, recovery, tracing
+│   ├── agent/          agent loop, planner, verification, delegation, context
+│   ├── providers/      OpenAI-compatible, Anthropic, Gemini, SDK adapters, router
+│   ├── tools/          tool registry, schema, execution boundary, shell
+│   ├── coding/         workspace tools, patches, git, checkpoints, office tools
+│   ├── browser/        snapshot-driven browser (CDP and Playwright backends)
+│   ├── mcp/            MCPRuntime, policy, OAuth, Google Workspace provider, MCP server
+│   ├── security/       approval, journal, network guard, redaction
+│   ├── memory/         lexical search, trust-tiered memory
+│   ├── learning/       lessons, skill drafts, validation, regression checks
+│   ├── skills/         built-in skills
+│   ├── orchestration/  sub-agents, graph scheduler
+│   ├── gateway/        Telegram gateway and approvals
+│   ├── automation/     scheduler worker
+│   ├── storage/        SQLite stores, migrations
+│   ├── bootstrap/      environment manager
+│   ├── tui/            terminal UI, themes, fonts
+│   └── cli/            command groups
+├── docs/               architecture, MCP, Google, browser, providers, roadmap
+├── tests/              unit and integration tests
+├── benchmarks/         offline benchmarks
+├── examples/           sample bootstrap files
+└── scripts/            helper scripts
 ```
 
-Browser automation needs a Chromium binary. On PC/VPS run `playwright install chromium` after installing the `[browser]` extra. On Android Termux install the distro package (`pkg install x11-repo && pkg install chromium`) and keep `browser.backend = "auto"` (raw CDP, no Playwright). See [Browser Automation](docs/BROWSER.md) for setup, security policy, and the full tool reference.
+---
 
-## Documentation
+## 📚 Documentation
 
-- [Bootstrap Architecture](BOOTSTRAP_ARCHITECTURE.md) — environment manager design, status vocabulary, global layout
-- [Bootstrap Implementation](BOOTSTRAP_IMPLEMENTATION.md) — component map, requirement trace, bugs fixed during integration
-- [Bootstrap Compatibility](BOOTSTRAP_COMPATIBILITY.md) — platform matrix, dependency/extras matrix, startup mechanisms, limitations
-- [Bootstrap Test Report](BOOTSTRAP_TEST_REPORT.md) — executed test evidence, lint results, end-to-end runs
-- [Architecture and Execution Flow](docs/ARCHITECTURE.md) — runtime boundary, lifecycle, persistence, and recovery
-- [Roadmap](docs/ROADMAP.md) — current priorities and planned work
-- [Provider Configuration](docs/PROVIDERS.md) — providers, fallbacks, and diagnostics
-- [Web Research](docs/WEB_RESEARCH.md) — search and fetch tools
-- [Browser Automation](docs/BROWSER.md) — snapshot-driven browsing, backends, security policy
-- [Task Execution](docs/TASK_EXECUTION.md) — execution model and task workflows
-- [MCP Integration](docs/MCP.md) — native MCP platform: client, server, policies
-- [Google OAuth Setup](docs/GOOGLE_OAUTH.md) — Google Cloud project, OAuth client, secure token storage
-- [Google Workspace Services](docs/GOOGLE_WORKSPACE.md) — Gmail, Drive, Docs, Sheets, Slides, Calendar, Chat, People, Classroom
-- [Eurus MCP Server](docs/MCP_SERVER.md) — expose Eurus tools to external MCP clients
-- [MCP Security](docs/MCP_SECURITY.md) — risk classification, approval policy, token security
-- [Troubleshooting](docs/TROUBLESHOOTING.md) — diagnostics for MCP, Google auth and Termux
-- [Multi-file Workflow](docs/MULTI_FILE_WORKFLOW.md) — workspace coding workflow
-- [Office Artifacts](docs/OFFICE_ARTIFACTS.md) — document and office file tools
-- [Clean-room Notes](docs/CLEAN_ROOM.md) — project design and provenance notes
-- [Memory](docs/MEMORY.md) — long-lived memory configuration and prompt injection
-- [Task Execution](docs/TASK_EXECUTION.md) — run lifecycle, budgets, checkpoints, and undo
-- [Reminders](docs/REMINDERS.md) — persistent Telegram reminders
-- [Contributing](CONTRIBUTING.md) — development workflow
-- [Security Policy](SECURITY.md) — reporting security issues
+| Topic | Document |
+|---|---|
+| Runtime | [Architecture and Execution Flow](docs/ARCHITECTURE.md) · [Task Execution](docs/TASK_EXECUTION.md) · [Roadmap](docs/ROADMAP.md) |
+| Providers | [Provider Configuration](docs/PROVIDERS.md) |
+| MCP and Google | [MCP Integration](docs/MCP.md) · [Google OAuth Setup](docs/GOOGLE_OAUTH.md) · [Google Workspace Services](docs/GOOGLE_WORKSPACE.md) · [Eurus MCP Server](docs/MCP_SERVER.md) · [MCP Security](docs/MCP_SECURITY.md) |
+| Tools | [Web Research](docs/WEB_RESEARCH.md) · [Browser Automation](docs/BROWSER.md) · [Multi-file Workflow](docs/MULTI_FILE_WORKFLOW.md) · [Office Artifacts](docs/OFFICE_ARTIFACTS.md) |
+| State | [Memory](docs/MEMORY.md) · [Reminders](docs/REMINDERS.md) |
+| Operations | [Troubleshooting](docs/TROUBLESHOOTING.md) · [Clean-room Notes](docs/CLEAN_ROOM.md) |
+| Project | [Contributing](CONTRIBUTING.md) · [Security Policy](SECURITY.md) · [Engineering Report](ENGINEERING_REPORT.md) |
 
-## Development
+---
+
+## 🧪 Development
 
 ```bash
 pip install -e ".[dev]"
@@ -355,18 +567,18 @@ mypy
 pytest -q
 ```
 
-The CI workflow runs linting, formatting, type checks, tests, packaging checks, command smoke tests, and documentation-link checks on Python 3.11—3.13. Local results may differ when network access, optional dependencies, or platform facilities are unavailable.
+CI runs lint, formatting, type checks, tests and smoke tests on Python 3.11 – 3.13. Local results may differ when network access, optional dependencies or platform facilities are unavailable.
 
-## Project status
+## 🧭 Project status
 
-**Pre-alpha · Active development**
+**Pre-alpha · active development.** Eurus is an evolving research and engineering project; features may be incomplete and behavior may change. The roadmap prioritizes runtime reliability, safe recovery, practical deployment and deterministic evaluation. When reporting an issue, include reproducible steps, environment details, logs with secrets removed, and expected versus actual behavior.
 
-Eurus is an evolving research and engineering project. Features may be incomplete, behavior may change, and test coverage does not imply production readiness. The roadmap prioritizes runtime reliability, safe recovery, practical deployment, and deterministic evaluation.
+## 📄 License
 
-If you experiment with Eurus, please include reproducible steps, environment details, relevant logs with secrets removed, and the expected versus actual behavior when reporting an issue.
+Released under the [MIT License](LICENSE).
 
-## License
+---
 
-Eurus is released under the [MIT License](LICENSE).
-
-# sentinel
+<p align="center">
+  <sub>Google, Gmail, Google Drive, Google Docs, Google Sheets, Google Slides, Google Calendar, Google Chat and Google Classroom are trademarks of Google LLC. Logos are rendered through shields.io / Simple Icons for identification only; Eurus is not affiliated with or endorsed by Google or any other listed provider.</sub>
+</p>
