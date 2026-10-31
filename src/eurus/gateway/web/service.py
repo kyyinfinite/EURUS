@@ -245,9 +245,7 @@ class GatewayService:
         handle.task = task
         return {"session_id": session_id, "run_id": run_id}
 
-    def _resolve_attachments(
-        self, session_id: str, media_ids: list[str]
-    ) -> list[Any]:
+    def _resolve_attachments(self, session_id: str, media_ids: list[str]) -> list[Any]:
         """Load media rows for a send, enforcing session ownership."""
         rows = []
         for media_id in media_ids[:8]:
@@ -255,9 +253,7 @@ class GatewayService:
             if row is None:
                 raise ServiceError("not_found", f"unknown attachment {media_id}")
             if row.session_id != session_id:
-                raise ServiceError(
-                    "invalid", f"attachment {media_id} belongs to another session"
-                )
+                raise ServiceError("invalid", f"attachment {media_id} belongs to another session")
             rows.append(row)
         return rows
 

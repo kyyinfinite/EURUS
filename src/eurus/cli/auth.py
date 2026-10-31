@@ -43,7 +43,8 @@ def auth_google_login(no_browser: bool) -> None:
             "Google OAuth client is not configured.\n"
             "Set EURUS_GOOGLE_CLIENT_ID and EURUS_GOOGLE_CLIENT_SECRET (or create\n"
             "~/.eurus/auth/google/client.json).\n"
-            "Create the client in the Google Cloud console and enable the 'AI-powered agent' client option."
+            "Create the client in the Google Cloud console and enable the "
+            "'AI-powered agent' client option."
         )
     scopes = provider.login_scopes()
     if not provider.settings.enabled_ids():

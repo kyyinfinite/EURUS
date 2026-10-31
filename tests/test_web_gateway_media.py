@@ -102,9 +102,7 @@ class TestUpload:
 
     def test_upload_sanitizes_filename(self, client: TestClient):
         session_id = _make_session(client)
-        response = _upload(
-            client, session_id, "../../etc/passwd.png", PNG_BYTES, "image/png"
-        )
+        response = _upload(client, session_id, "../../etc/passwd.png", PNG_BYTES, "image/png")
         assert response.status_code == 201
         assert "/" not in response.json()["filename"]
         assert ".." not in response.json()["filename"]
@@ -122,22 +120,16 @@ class TestContentAccess:
     def test_content_requires_token(self, client: TestClient):
         session_id = _make_session(client)
         media = _upload(client, session_id, "photo.png", PNG_BYTES, "image/png").json()
-        assert (
-            client.get(f"/api/media/{media['id']}/content").status_code == 401
-        )
+        assert client.get(f"/api/media/{media['id']}/content").status_code == 401
 
     def test_unknown_media_404(self, client: TestClient):
         assert client.get("/api/media/deadbeef", headers=AUTH).status_code == 404
-        assert (
-            client.get("/api/media/deadbeef/content", headers=AUTH).status_code == 404
-        )
+        assert client.get("/api/media/deadbeef/content", headers=AUTH).status_code == 404
 
     def test_delete_media(self, client: TestClient):
         session_id = _make_session(client)
         media = _upload(client, session_id, "photo.png", PNG_BYTES, "image/png").json()
-        assert (
-            client.delete(f"/api/media/{media['id']}", headers=AUTH).status_code == 200
-        )
+        assert client.delete(f"/api/media/{media['id']}", headers=AUTH).status_code == 200
         assert client.get(f"/api/media/{media['id']}", headers=AUTH).status_code == 404
 
 
@@ -157,9 +149,7 @@ class TestMessageComposition:
         import time
 
         for _ in range(50):
-            messages = client.get(
-                f"/api/sessions/{session_id}/messages", headers=AUTH
-            ).json()
+            messages = client.get(f"/api/sessions/{session_id}/messages", headers=AUTH).json()
             if messages:
                 break
             time.sleep(0.1)
@@ -184,9 +174,7 @@ class TestMessageComposition:
         import time
 
         for _ in range(50):
-            messages = client.get(
-                f"/api/sessions/{session_id}/messages", headers=AUTH
-            ).json()
+            messages = client.get(f"/api/sessions/{session_id}/messages", headers=AUTH).json()
             if messages:
                 break
             time.sleep(0.1)
@@ -221,30 +209,22 @@ class TestCodeAndDataUploads:
 
     def test_upload_python_source(self, client: TestClient):
         session_id = _make_session(client)
-        response = _upload(
-            client, session_id, "script.py", b"print('hi')\n", "text/x-python"
-        )
+        response = _upload(client, session_id, "script.py", b"print('hi')\n", "text/x-python")
         assert response.status_code == 201, response.text
         body = response.json()
         assert body["kind"] == "document"
         assert body["mime"] == "text/x-python"
 
-    def test_upload_python_source_with_browsers_default_mime(
-        self, client: TestClient
-    ):
+    def test_upload_python_source_with_browsers_default_mime(self, client: TestClient):
         """Some browsers send application/octet-stream (or nothing) for .py."""
         session_id = _make_session(client)
-        response = _upload(
-            client, session_id, "script.py", b"x = 1\n", "application/octet-stream"
-        )
+        response = _upload(client, session_id, "script.py", b"x = 1\n", "application/octet-stream")
         assert response.status_code == 201, response.text
         assert response.json()["mime"] == "text/x-python"
 
     def test_upload_xml_document(self, client: TestClient):
         session_id = _make_session(client)
-        response = _upload(
-            client, session_id, "data.xml", b"<a><b>1</b></a>", "text/xml"
-        )
+        response = _upload(client, session_id, "data.xml", b"<a><b>1</b></a>", "text/xml")
         assert response.status_code == 201
         assert response.json()["mime"] == "text/xml"
 
@@ -260,9 +240,7 @@ class TestCodeAndDataUploads:
             assert response.status_code == 201, (name, response.text)
             assert response.json()["kind"] == "document"
 
-    def test_code_source_is_inlined_for_text_only_providers(
-        self, client: TestClient
-    ):
+    def test_code_source_is_inlined_for_text_only_providers(self, client: TestClient):
         session_id = _make_session(client)
         media = _upload(
             client, session_id, "tool.py", b"def run():\n    return 42\n", "text/x-python"
@@ -275,9 +253,7 @@ class TestCodeAndDataUploads:
         import time
 
         for _ in range(50):
-            messages = client.get(
-                f"/api/sessions/{session_id}/messages", headers=AUTH
-            ).json()
+            messages = client.get(f"/api/sessions/{session_id}/messages", headers=AUTH).json()
             if messages:
                 break
             time.sleep(0.1)
@@ -291,9 +267,7 @@ class TestMediaListing:
     def test_list_media_returns_recent_rows(self, client: TestClient):
         session_id = _make_session(client)
         first = _upload(client, session_id, "a.png", PNG_BYTES, "image/png").json()
-        second = _upload(
-            client, session_id, "b.txt", b"text", "text/plain"
-        ).json()
+        second = _upload(client, session_id, "b.txt", b"text", "text/plain").json()
         response = client.get("/api/media", headers=AUTH)
         assert response.status_code == 200
         rows = response.json()
@@ -307,16 +281,11 @@ class TestMediaListing:
         second = _make_session(client, "second")
         _upload(client, first, "a.png", PNG_BYTES, "image/png")
         mine = _upload(client, second, "b.png", PNG_BYTES, "image/png").json()
-        rows = client.get(
-            f"/api/media?session_id={second}", headers=AUTH
-        ).json()
+        rows = client.get(f"/api/media?session_id={second}", headers=AUTH).json()
         assert [row["id"] for row in rows] == [mine["id"]]
 
     def test_list_media_rejects_unknown_session(self, client: TestClient):
-        assert (
-            client.get("/api/media?session_id=missing", headers=AUTH).status_code
-            == 404
-        )
+        assert client.get("/api/media?session_id=missing", headers=AUTH).status_code == 404
 
     def test_list_media_requires_token(self, client: TestClient):
         assert client.get("/api/media").status_code == 401

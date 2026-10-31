@@ -15,10 +15,9 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import (
-    Depends,
     FastAPI,
     File,
     Form,
@@ -161,7 +160,8 @@ def create_app(ctx: GatewayContext, *, static_dir: Path | None = None) -> FastAP
 
     @app.post("/api/media", status_code=201)
     async def upload_media(
-        session_id: str = Form(...), file: UploadFile = File(...)
+        session_id: Annotated[str, Form()],
+        file: Annotated[UploadFile, File()],
     ) -> dict[str, Any]:
         data = await file.read()
         return await service.upload_media(
@@ -179,7 +179,7 @@ def create_app(ctx: GatewayContext, *, static_dir: Path | None = None) -> FastAP
             path,
             media_type=media.mime,
             filename=media.filename,
-            headers={"Content-Disposition": f"inline; filename=\"{media.filename}\""},
+            headers={"Content-Disposition": f'inline; filename="{media.filename}"'},
         )
 
     @app.delete("/api/media/{media_id}")
@@ -343,7 +343,8 @@ def create_app(ctx: GatewayContext, *, static_dir: Path | None = None) -> FastAP
             return HTMLResponse(
                 "<h1>EURUS Web Gateway</h1><p>Frontend build not found. "
                 "Build it with <code>npm ci &amp;&amp; npm run build</code> inside "
-                "<code>frontend/</code>, or run the Vite dev server instead.</p>",
+                "<code>frontend/</code>, or run the Vite dev server instead. "
+                "See docs/WEB_GATEWAY.md.</p>",
                 status_code=200,
             )
         if full_path:

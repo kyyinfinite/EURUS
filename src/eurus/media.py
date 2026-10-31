@@ -244,9 +244,7 @@ class MediaStore:
         if not data:
             raise MediaError("file is empty")
         if len(data) > MAX_MEDIA_BYTES:
-            raise MediaError(
-                f"file exceeds the {MAX_MEDIA_BYTES // (1024 * 1024)} MB limit"
-            )
+            raise MediaError(f"file exceeds the {MAX_MEDIA_BYTES // (1024 * 1024)} MB limit")
         safe_name = sanitize_filename(filename)
         mime, kind = sniff_mime(data, declared_mime, safe_name)
         media_id = uuid.uuid4().hex
@@ -258,7 +256,7 @@ class MediaStore:
         storage_path.write_bytes(data)
         import datetime as _dt
 
-        created_at = _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
+        created_at = _dt.datetime.now(_dt.UTC).isoformat(timespec="seconds")
         row = MediaFile(
             id=media_id,
             session_id=session_id,
@@ -329,9 +327,7 @@ class MediaStore:
         if row is None:
             return False
         with sqlite_managed(self.database, rows=True) as connection:
-            cursor = connection.execute(
-                "DELETE FROM media_files WHERE id = ?", (media_id,)
-            )
+            cursor = connection.execute("DELETE FROM media_files WHERE id = ?", (media_id,))
         from contextlib import suppress
 
         with suppress(OSError):
