@@ -11,6 +11,7 @@ from eurus.errors import ToolError
 from eurus.models import ToolCall, ToolResult
 from eurus.providers.base import INVALID_ARGUMENTS_KEY, ToolSpec
 from eurus.tools.schema import validate_arguments
+from eurus.workspace import WorkspaceManager
 
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 HEAD_SHARE = 0.7
@@ -42,6 +43,7 @@ class ToolContext:
     run_store: Any | None = None
     max_child_iterations: int | None = None
     event_sink: Callable[[str, dict[str, Any]], None] | None = None
+    workspaces: WorkspaceManager | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import contextlib
 import os
 from pathlib import Path
 
 from eurus.bootstrap.models import BootstrapError
 from eurus.dotenv import KEY_NAME
+from eurus.paths import ensure_private_dir as _ensure_private_dir
 
 ENV_PERMISSION = 0o600
 DIR_PERMISSION = 0o700
@@ -27,10 +27,7 @@ def atomic_write(path: Path, text: str, *, mode: int = ENV_PERMISSION) -> None:
 
 
 def ensure_private_dir(path: Path) -> Path:
-    path.mkdir(parents=True, exist_ok=True, mode=DIR_PERMISSION)
-    with contextlib.suppress(OSError):
-        os.chmod(path, DIR_PERMISSION)
-    return path
+    return _ensure_private_dir(path)
 
 
 def tighten_permissions(path: Path) -> bool:

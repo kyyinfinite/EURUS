@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from eurus import paths
 from eurus.browser.backend import (
     BrowserBackend,
     BrowserPage,
@@ -351,10 +352,8 @@ class CdpBackend(BrowserBackend):
         if configured:
             profile = Path(configured).expanduser()
         else:
-            from eurus import paths
-
-            profile = paths.home_dir() / "browser" / "profile"
-        profile.mkdir(parents=True, exist_ok=True)
+            profile = paths.home_manager().browser_profile_dir
+        paths.ensure_private_dir(profile)
         return profile
 
     async def _after_connect(self) -> None:

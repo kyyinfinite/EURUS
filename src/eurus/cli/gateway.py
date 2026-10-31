@@ -32,7 +32,7 @@ def gateway_status() -> None:
     from eurus.gateway.health import describe_gateway
     from eurus.gateway.tasks import TaskStore
 
-    path = paths.home_dir() / "sessions.sqlite3"
+    path = paths.database_path()
     if not path.exists():
         click.echo("No gateway task database found.")
         return
@@ -57,7 +57,7 @@ def gateway_status() -> None:
 def gateway_prune(days: float, yes: bool) -> None:
     from eurus.gateway.tasks import TaskStore
 
-    path = paths.home_dir() / "sessions.sqlite3"
+    path = paths.database_path()
     if not path.exists():
         click.echo("No gateway task database found.")
         return
@@ -67,6 +67,68 @@ def gateway_prune(days: float, yes: bool) -> None:
         click.echo(f"Deleted {count} finished tasks older than {days:g} days.")
     else:
         click.echo(f"{count} finished tasks are older than {days:g} days. Re-run with --yes.")
+
+
+@gateway_group.command("web")
+@click.option(
+    "--host",
+    default="127.0.0.1",
+    show_default=True,
+    help="Bind address (loopback by default).",
+)
+@click.option(
+    "--port",
+    default=8712,
+    type=click.IntRange(1, 65535),
+    show_default=True,
+    help="Local port.",
+)
+@click.option(
+    "--open/--no-open",
+    "open_browser",
+    default=False,
+    show_default=True,
+    help="Open the browser.",
+)
+@click.pass_context
+def gateway_web(ctx: click.Context, host: str, port: int, open_browser: bool) -> None:
+    """Run the local web gateway for the canonical EURUS runtime."""
+    import os
+
+    from eurus.errors import EurusError
+    from eurus.gateway.web.app import build_context, serve
+    from eurus.gateway.web.auth import GatewayCredentialStore, GatewaySecurity
+
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        click.echo(
+            f"Warning: binding to {host} exposes the gateway beyond this machine. "
+            "Token authentication stays enabled, but loopback is recommended.",
+            err=True,
+        )
+    config = _state(ctx).config
+    try:
+        token = os.environ.get("EURUS_GATEWAY_TOKEN", "").strip()
+        if not token:
+            token = GatewayCredentialStore().load_or_create()
+        security = GatewaySecurity(token, host=host, port=port)
+        approval_timeout = float(os.environ.get("EURUS_GATEWAY_APPROVAL_TIMEOUT", "600") or "600")
+        context = build_context(config, security=security, approval_timeout=approval_timeout)
+    except (RuntimeError, ValueError, OSError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    except EurusError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    try:
+        asyncio.run(
+            serve(
+                context,
+                host=host,
+                port=port,
+                open_browser=open_browser,
+            )
+        )
+    except (RuntimeError, EurusError) as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 @gateway_group.command("telegram")
@@ -96,8 +158,8 @@ def gateway_telegram(ctx: click.Context, max_concurrent: int) -> None:
     except (RuntimeError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
 
-    store = TaskStore(paths.home_dir() / "sessions.sqlite3")
-    session_store = SessionStore(paths.home_dir() / "sessions.sqlite3")
+    store = TaskStore(paths.database_path())
+    session_store = SessionStore(paths.database_path())
 
     async def serve() -> None:
         from eurus.runtime.application import AgentRuntime
@@ -112,7 +174,7 @@ def gateway_telegram(ctx: click.Context, max_concurrent: int) -> None:
             mcp.register_tools(registry)
             from eurus.reminders import ReminderStore, reminder_tools
 
-            reminder_store = ReminderStore(paths.home_dir() / "sessions.sqlite3")
+            reminder_store = ReminderStore(paths.database_path())
             for reminder_tool in reminder_tools(reminder_store):
                 if reminder_tool.name not in registry:
                     registry.register(reminder_tool)

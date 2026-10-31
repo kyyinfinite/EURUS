@@ -62,7 +62,7 @@ async def _approve(call: ToolCall, tool: Tool) -> bool:
     click.echo(request.summary, err=True)
     click.echo(f"Action fingerprint: {request.action_fingerprint[:16]}", err=True)
     allowed = click.confirm("Allow this action?", default=False, err=True)
-    SessionStore(paths.home_dir() / "sessions.sqlite3").record_event(
+    SessionStore(paths.database_path()).record_event(
         "approval_accepted" if allowed else "approval_rejected",
         metadata={"tool": call.name, "mutating": tool.mutates},
     )
@@ -74,7 +74,8 @@ async def _deny_remote_approval(call: ToolCall, tool: Tool) -> bool:
 
 
 def _engine_stores() -> tuple[RunStore, EventStore, ToolAttemptStore]:
-    database = Database(paths.home_dir() / "sessions.sqlite3")
+    paths.home_manager().ensure_layout()
+    database = Database(paths.database_path())
     return RunStore(database), EventStore(database), ToolAttemptStore(database)
 
 

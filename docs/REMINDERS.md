@@ -1,6 +1,6 @@
 # Persistent Telegram reminders
 
-Eurus Telegram supports persistent reminders created through the agent tools `create_reminder`, `list_reminders`, `reschedule_reminder`, and `cancel_reminder`. Reminder records are stored in `sessions.sqlite3`, so they survive process restarts. The Telegram reminder dispatcher runs alongside polling and sends messages even when the owner is not actively chatting with Eurus.
+Eurus Telegram supports persistent reminders created through the agent tools `create_reminder`, `list_reminders`, `reschedule_reminder`, and `cancel_reminder`. Reminder records are stored in the runtime database `~/.eurus/data/eurus.sqlite3` (formerly `sessions.sqlite3`), so they survive process restarts. The Telegram reminder dispatcher runs alongside polling and sends messages even when the owner is not actively chatting with Eurus.
 
 ## Time handling
 

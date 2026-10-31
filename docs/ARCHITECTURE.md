@@ -365,3 +365,13 @@ All tracing and observability views are read-only.
 - Optional integrations must not make the core runtime dependent on Docker or native compilation
 
 For implementation details, see the corresponding modules under `src/eurus/`.
+
+## Home, Workspace, and Storage Layout (0.2.0)
+
+Since 0.2.0 the runtime has a single authoritative resolver for every filesystem location:
+
+- `eurus.home.HomeManager` owns `~/.eurus` (or `$EURUS_HOME`), creates directories lazily with 0700 permissions, tightens drifted permissions on existing directories, and maintains `system/version` and `system/manifest.json`.
+- The runtime database lives at `~/.eurus/data/eurus.sqlite3`. Existing installations are migrated automatically on first use from the legacy `~/.eurus/sessions.sqlite3` through a checkpointed, verified, lock-serialized copy; the legacy file is preserved for rollback.
+- `eurus.workspace.WorkspaceManager` owns workspace scopes: the configured default workspace plus managed scopes under `~/.eurus/workspace/` (`projects/`, `temp/runs/`, `automation/`, `shared/`, `artifacts/`). It provides traversal/symlink-safe resolution and descriptor-relative (`O_NOFOLLOW`) open primitives for security-sensitive file operations.
+
+Design details and the migration procedure: [architecture/HOME_AND_WORKSPACE.md](architecture/HOME_AND_WORKSPACE.md). Program status and milestones: [plans/IMPLEMENTATION_PHASES.md](plans/IMPLEMENTATION_PHASES.md), audit: [plans/IMPLEMENTATION_AUDIT.md](plans/IMPLEMENTATION_AUDIT.md), risks: [plans/RISK_REGISTER.md](plans/RISK_REGISTER.md).

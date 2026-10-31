@@ -47,7 +47,7 @@ class CheckpointStore:
     """
 
     def __init__(self, home: Path | None = None) -> None:
-        self.directory = (home or paths.home_dir()) / "undo"
+        self.directory = home / "undo" if home is not None else paths.home_manager().undo_dir
 
     def _manifest_path(self, run_id: str) -> Path:
         safe = "".join(ch for ch in run_id if ch.isalnum() or ch in "-_")[:120]

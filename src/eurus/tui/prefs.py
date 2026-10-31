@@ -37,7 +37,7 @@ def load(environ: Mapping[str, str] | None = None, home: Path | None = None) -> 
 def save(prefs: ViewPrefs, home: Path | None = None) -> Path | None:
     base = home or paths.home_dir()
     try:
-        base.mkdir(parents=True, exist_ok=True)
+        paths.ensure_private_dir(base)
         target = base / PREFS_FILE
         target.write_text(json.dumps(asdict(prefs), indent=2) + "\n", encoding="utf-8")
         return target

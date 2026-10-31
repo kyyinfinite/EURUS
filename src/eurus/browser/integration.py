@@ -43,6 +43,8 @@ def browser_manager_for(
 ) -> BrowserManager:
     manager = registry_manager(registry)
     if manager is not None:
+        if workspace is not None:
+            manager.set_workspace(workspace)
         return manager
     manager = BrowserManager(settings, workspace=workspace)
     setattr(registry, MANAGER_ATTRIBUTE, manager)

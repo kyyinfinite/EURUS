@@ -232,9 +232,10 @@ def check_env_permissions(environ: dict[str, str]) -> CheckResult:
 
 
 def check_database(environ: dict[str, str]) -> CheckResult:
-    from eurus import paths
+    from eurus.home import HomeManager
 
-    database = paths.home_dir(environ) / "sessions.sqlite3"
+    home = HomeManager(environ)
+    database = home.database_file if home.database_file.exists() else home.legacy_database_file
     if not database.exists():
         return CheckResult(
             name="database",

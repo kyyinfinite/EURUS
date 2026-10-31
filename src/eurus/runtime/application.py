@@ -12,11 +12,13 @@ from eurus.agent.loop import Agent
 from eurus.observability import classify_error, elapsed_ms
 from eurus.runtime.engine import AgentEngine
 from eurus.runtime.event_bridge import AgentEventBridge
+from eurus.runtime.models import Run
 from eurus.sessions import SessionStore
 
 AgentFactory = Callable[[str], Agent]
 CloseCallback = Callable[[], Awaitable[None]]
 EngineFactory = Callable[[Agent], AgentEngine]
+RunFactory = Callable[[str], Run]
 
 log = logging.getLogger(__name__)
 
@@ -115,8 +117,9 @@ class AgentRuntime:
         text: str,
         *,
         task_id: str | None = None,
+        run_factory: RunFactory | None = None,
     ) -> AsyncIterator[AgentEvent]:
-        return self._stream(session_id, text, task_id, None, True)
+        return self._stream(session_id, text, task_id, None, True, run_factory)
 
     def run_agent(
         self,
@@ -126,8 +129,9 @@ class AgentRuntime:
         *,
         task_id: str | None = None,
         persist: bool = True,
+        run_factory: RunFactory | None = None,
     ) -> AsyncIterator[AgentEvent]:
-        return self._stream(session_id, text, task_id, agent, persist)
+        return self._stream(session_id, text, task_id, agent, persist, run_factory)
 
     async def _stream(
         self,
@@ -136,6 +140,7 @@ class AgentRuntime:
         task_id: str | None,
         supplied: Agent | None,
         persist: bool,
+        run_factory: RunFactory | None = None,
     ) -> AsyncIterator[AgentEvent]:
         if not session_id.strip():
             raise ValueError("session id must not be empty")
@@ -161,7 +166,10 @@ class AgentRuntime:
                 correlation = {"session_id": session_id, "task_id": task_id or ""}
                 try:
                     if self.engine_factory is not None:
-                        async for event in self._stream_durable(session_id, text, task_id, agent):
+                        run = run_factory(text) if run_factory is not None else None
+                        async for event in self._stream_durable(
+                            session_id, text, task_id, agent, run
+                        ):
                             events += 1
                             yield event
                     elif self.require_engine:
@@ -203,7 +211,12 @@ class AgentRuntime:
                     self._idle.set()
 
     async def _stream_durable(
-        self, session_id: str, text: str, task_id: str | None, agent: Agent
+        self,
+        session_id: str,
+        text: str,
+        task_id: str | None,
+        agent: Agent,
+        run: Run | None = None,
     ) -> AsyncIterator[AgentEvent]:
         engine = self.engine_factory(agent) if self.engine_factory is not None else None
         if engine is None:
@@ -221,7 +234,9 @@ class AgentRuntime:
             await self.event_bridge.publish(session_id, event, task_id=task_id)
             queue.put_nowait(event)
 
-        engine_task = asyncio.create_task(engine.run(text, session_id=session_id, on_event=forward))
+        engine_task = asyncio.create_task(
+            engine.run(text, session_id=session_id, on_event=forward, run=run)
+        )
         try:
             while True:
                 get_task = asyncio.create_task(queue.get())

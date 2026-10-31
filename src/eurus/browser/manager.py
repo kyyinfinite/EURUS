@@ -481,6 +481,14 @@ class BrowserManager:
         if hasattr(self.backend, "set_download_dir"):
             self.backend.set_download_dir(self.download_root)
 
+    def set_workspace(self, workspace: Path) -> None:
+        resolved = Path(workspace).expanduser().resolve()
+        if resolved == self.workspace:
+            return
+        self.workspace = resolved
+        if hasattr(self.backend, "set_download_dir"):
+            self.backend.set_download_dir(self.download_root)
+
     @property
     def download_root(self) -> Path:
         if self.settings.download_dir:

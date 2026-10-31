@@ -30,7 +30,7 @@ def memory_group() -> None:
     default="fact",
 )
 def memory_add(content: str, tags: str, category: str, scope: str, memory_type: str) -> None:
-    memory_id = SessionStore(paths.home_dir() / "sessions.sqlite3").add_memory(
+    memory_id = SessionStore(paths.database_path()).add_memory(
         content,
         tags,
         category=category,
@@ -47,7 +47,7 @@ def memory_add(content: str, tags: str, category: str, scope: str, memory_type: 
 def memory_promote(memory_id: int) -> None:
     from eurus.memory.manager import MemoryManager
 
-    manager = MemoryManager(paths.home_dir() / "sessions.sqlite3")
+    manager = MemoryManager(paths.database_path())
     try:
         promoted = manager.promote(memory_id, authority="user")
     except PermissionError as exc:
@@ -64,7 +64,7 @@ def memory_promote(memory_id: int) -> None:
 def memory_quarantine(scope: str | None) -> None:
     from eurus.memory.manager import MemoryManager
 
-    manager = MemoryManager(paths.home_dir() / "sessions.sqlite3")
+    manager = MemoryManager(paths.database_path())
     rows = manager.quarantined(scope=scope)
     if not rows:
         click.echo("no quarantined memories")
@@ -82,9 +82,7 @@ def memory_quarantine(scope: str | None) -> None:
 @click.option("--limit", type=click.IntRange(1, 100), default=10)
 @click.option("--scope", default=None, help="Limit results to global notes and this project scope.")
 def memory_search(query: str, limit: int, scope: str | None) -> None:
-    results = SessionStore(paths.home_dir() / "sessions.sqlite3").search_memories(
-        query, limit, scope=scope
-    )
+    results = SessionStore(paths.database_path()).search_memories(query, limit, scope=scope)
     for item in results:
         click.echo(f"#{item['id']} [{item['category']}] [{item['tags']}] {item['content']}")
     if not results:
@@ -96,7 +94,7 @@ def memory_search(query: str, limit: int, scope: str | None) -> None:
 @click.option("--limit", type=click.IntRange(1, 500), default=50)
 @click.option("--scope", default=None, help="Limit results to global notes and this project scope.")
 def memory_list(category: str | None, limit: int, scope: str | None) -> None:
-    store = SessionStore(paths.home_dir() / "sessions.sqlite3")
+    store = SessionStore(paths.database_path())
     for item in store.list_memories(category=category, limit=limit, scope=scope):
         click.echo(f"#{item['id']} [{item['category']}] [{item['tags']}] {item['content']}")
 
@@ -107,7 +105,7 @@ def memory_list(category: str | None, limit: int, scope: str | None) -> None:
 @click.option("--tag", "tags", default=None, help="Replace tags.")
 @click.option("--category", default=None, help="Replace category.")
 def memory_update(memory_id: int, content: str, tags: str | None, category: str | None) -> None:
-    store = SessionStore(paths.home_dir() / "sessions.sqlite3")
+    store = SessionStore(paths.database_path())
     if not store.update_memory(memory_id, content, tags=tags, category=category):
         raise click.ClickException(f"memory not found: {memory_id}")
     click.echo(f"updated memory {memory_id}")
@@ -117,7 +115,7 @@ def memory_update(memory_id: int, content: str, tags: str | None, category: str 
 @click.argument("memory_id", type=int)
 @click.confirmation_option(prompt="Delete this memory?")
 def memory_delete(memory_id: int) -> None:
-    if not SessionStore(paths.home_dir() / "sessions.sqlite3").delete_memory(memory_id):
+    if not SessionStore(paths.database_path()).delete_memory(memory_id):
         raise click.ClickException(f"memory not found: {memory_id}")
     click.echo(f"deleted memory {memory_id}")
 
@@ -129,12 +127,12 @@ def privacy_group() -> None:
 
 @privacy_group.command("export")
 def privacy_export() -> None:
-    data = SessionStore(paths.home_dir() / "sessions.sqlite3").export_privacy_data()
+    data = SessionStore(paths.database_path()).export_privacy_data()
     click.echo(json.dumps(data, ensure_ascii=False, indent=2))
 
 
 @privacy_group.command("purge")
 @click.confirmation_option(prompt="Clear saved sessions, memories, and local activity metadata?")
 def privacy_purge() -> None:
-    counts = SessionStore(paths.home_dir() / "sessions.sqlite3").purge_privacy_data()
+    counts = SessionStore(paths.database_path()).purge_privacy_data()
     click.echo(json.dumps({"purged": counts}, ensure_ascii=False))

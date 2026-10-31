@@ -102,8 +102,8 @@ class InteractiveSession:
         self.renderer.stream_preview = self.prefs.stream_preview
         self.history: list[Message] = []
         self.session_id = str(uuid.uuid4())
-        self.session_store = SessionStore(paths.home_dir() / "sessions.sqlite3")
-        self.memory = MemoryManager(paths.home_dir() / "sessions.sqlite3")
+        self.session_store = SessionStore(paths.database_path())
+        self.memory = MemoryManager(paths.database_path())
         self.running = True
         self.picker: PromptBox | None = None
         self.recolor: Recolor | None = None
@@ -935,7 +935,8 @@ class InteractiveSession:
         from eurus.storage.tool_attempts import ToolAttemptStore
 
         if self._engine_database is None:
-            self._engine_database = Database(paths.home_dir() / "sessions.sqlite3")
+            paths.home_manager().ensure_layout()
+            self._engine_database = Database(paths.database_path())
         if self._engine_stores is None:
             self._engine_stores = (
                 RunStore(self._engine_database),

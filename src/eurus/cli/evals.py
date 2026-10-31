@@ -117,7 +117,7 @@ def eval_command(
         baseline = asyncio.run(run_suite(False))
         treated = asyncio.run(run_suite(True))
         stamp = time.strftime("%Y%m%d-%H%M%S")
-        store = EvaluationStore(paths.home_dir() / "evals" / "learning-evals.sqlite3")
+        store = EvaluationStore(paths.home_manager().evals_dir / "learning-evals.sqlite3")
         _record_suite(store, f"lessons-off-{stamp}", baseline, lessons=False)
         _record_suite(store, f"lessons-on-{stamp}", treated, lessons=True)
         report = _compare_learning_report(baseline, treated)
@@ -247,7 +247,7 @@ def benchmark_command(ctx: click.Context, names: tuple[str, ...], lessons: bool)
 @click.option("--days", type=click.IntRange(1, 3650), default=30, show_default=True)
 def metrics_command(days: int) -> None:
 
-    store = SessionStore(paths.home_dir() / "sessions.sqlite3")
+    store = SessionStore(paths.database_path())
     metrics = store.event_metrics(days=days)
     rates = store.event_rates(days=days)
     click.echo(f"Lifecycle events in the last {days} days:")

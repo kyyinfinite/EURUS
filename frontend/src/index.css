@@ -1,0 +1,283 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------------------------------------------------------------------------
+ * EURUS light workspace — global base styles.
+ * Palette is fixed in tailwind.config.js (canvas/surface/copper/ink/line).
+ * ------------------------------------------------------------------------- */
+
+:root {
+  color-scheme: light;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-top: env(safe-area-inset-top, 0px);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  @apply bg-canvas text-ink font-sans antialiased;
+  font-feature-settings: "cv02", "cv03", "cv04", "ss01";
+  overscroll-behavior-y: none;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #D8CFC4 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #D8CFC4;
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #C9BEAF;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::selection {
+  background: rgba(153, 83, 41, 0.16);
+}
+
+/* ---- accessibility --------------------------------------------------------- */
+
+:focus-visible {
+  outline: 2px solid rgba(153, 83, 41, 0.55);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---- form controls --------------------------------------------------------- */
+
+input,
+textarea,
+select {
+  @apply border border-line bg-surface rounded-md px-3 py-2 text-sm text-ink
+    placeholder:text-faint outline-none transition-colors
+    focus:border-copper/60 focus:ring-2 focus:ring-copper/15;
+}
+
+button {
+  @apply cursor-pointer disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid rgba(153, 83, 41, 0.55);
+  outline-offset: 1px;
+}
+
+/* ---- atmosphere ------------------------------------------------------------ */
+
+/* Warm paper backdrop: a restrained copper breath at the top. No glass, no
+   loud gradients — depth cues only, tuned for the light workspace. */
+.bg-atmosphere {
+  background-color: #f7f5f1;
+  background-image: radial-gradient(
+    1100px 420px at 28% -160px,
+    rgba(153, 83, 41, 0.05),
+    transparent 62%
+  );
+}
+
+/* ---- utility helpers --------------------------------------------------------- */
+
+.safe-bottom {
+  padding-bottom: var(--safe-bottom);
+}
+
+.safe-top {
+  padding-top: var(--safe-top);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.code-block {
+  @apply font-mono text-xs bg-raised-soft border border-line rounded-lg p-3 overflow-x-auto;
+}
+
+.stream-text::after {
+  content: "▍";
+  @apply text-copper animate-pulse-soft;
+  margin-left: 1px;
+}
+
+/* ---- markdown (agent output — the intelligence renderer) ---------------------- */
+
+.prose-agent {
+  @apply text-[15px] leading-relaxed text-ink;
+}
+
+.prose-agent h1,
+.prose-agent h2,
+.prose-agent h3,
+.prose-agent h4 {
+  @apply font-semibold text-ink mt-5 mb-2.5 leading-snug;
+}
+
+.prose-agent h1 {
+  @apply text-xl;
+}
+
+.prose-agent h2 {
+  @apply text-lg;
+}
+
+.prose-agent h3 {
+  @apply text-base;
+}
+
+.prose-agent h4 {
+  @apply text-[15px];
+}
+
+.prose-agent p {
+  @apply my-2.5 leading-relaxed;
+}
+
+.prose-agent > :first-child {
+  margin-top: 0;
+}
+
+.prose-agent > :last-child {
+  margin-bottom: 0;
+}
+
+.prose-agent ul,
+.prose-agent ol {
+  @apply my-2.5 ml-5 space-y-1.5;
+}
+
+.prose-agent ul {
+  @apply list-disc;
+}
+
+.prose-agent ol {
+  @apply list-decimal;
+}
+
+.prose-agent li::marker {
+  @apply text-muted;
+}
+
+.prose-agent li > p {
+  @apply my-1;
+}
+
+.prose-agent input[type="checkbox"] {
+  margin-right: 0.4em;
+  vertical-align: -2px;
+  accent-color: #995329;
+}
+
+.prose-agent code {
+  @apply font-mono text-[13px] bg-raised border border-line-soft text-copper-dark
+    px-1.5 py-0.5 rounded-md;
+}
+
+.prose-agent pre {
+  @apply my-3;
+}
+
+.prose-agent pre code {
+  @apply bg-transparent border-0 p-0 text-ink text-[13px];
+}
+
+.prose-agent a {
+  @apply text-copper underline decoration-copper/35 underline-offset-2
+    transition-colors hover:decoration-copper;
+}
+
+.prose-agent blockquote {
+  @apply border-l-[3px] border-copper/40 bg-copper-tint pl-3.5 pr-3 py-1 my-3
+    rounded-r-md text-dim;
+}
+
+.prose-agent table {
+  @apply my-3 w-full border-collapse text-[13px] overflow-hidden rounded-lg;
+}
+
+.prose-agent thead th {
+  @apply bg-raised-soft text-left font-semibold text-ink;
+}
+
+.prose-agent th,
+.prose-agent td {
+  @apply border border-line px-3 py-1.5 align-top;
+}
+
+.prose-agent tbody tr:nth-child(even) {
+  @apply bg-canvas/60;
+}
+
+.prose-agent hr {
+  @apply border-line my-4;
+}
+
+.prose-agent img {
+  @apply rounded-lg border border-line max-w-full;
+}
+
+.prose-agent footnotes {
+  @apply mt-4 pt-3 border-t border-line-soft text-[13px] text-muted block;
+}
+
+.prose-agent .footnote-ref {
+  @apply text-copper no-underline;
+}
+
+.prose-agent del {
+  @apply text-muted;
+}
+
+/* KaTeX: inherit the workspace type scale instead of its own sizing. */
+.prose-agent .katex {
+  font-size: 1.06em;
+}
+
+.prose-agent .katex-display {
+  @apply my-3 overflow-x-auto overflow-y-hidden py-1;
+}
+
+/* ---- conversation excerpt blocks (attachments inlined by the backend) -------- */
+
+.excerpt-block {
+  @apply font-mono text-2xs border border-line-soft bg-raised-soft/70 px-3 py-2 my-1
+    whitespace-pre-wrap break-words text-muted rounded-md;
+}

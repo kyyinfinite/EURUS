@@ -7,8 +7,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from eurus import paths
 from eurus.models import Message
-from eurus.paths import ensure_private_dir, home_dir
+from eurus.paths import ensure_private_dir
 from eurus.providers.router import Router
 
 _NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -74,7 +75,7 @@ def render_skill(name: str, description: str, content: str) -> str:
 
 class SkillDraftStore:
     def __init__(self, root: Path | None = None) -> None:
-        self.root = root or home_dir() / "skills" / "quarantine"
+        self.root = root if root is not None else paths.home_manager().skills_quarantine_dir
 
     MAX_PATCH_VERSIONS = 3
 

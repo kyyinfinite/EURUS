@@ -8,7 +8,7 @@ from eurus.agent.planner import TaskPlanner
 from eurus.memory.manager import MemoryManager
 from eurus.memory.rerank import rerank_memories
 from eurus.models import Message
-from eurus.paths import home_dir
+from eurus.paths import database_path
 from eurus.providers.router import Router
 from eurus.tools.base import Tool, ToolContext
 
@@ -16,7 +16,7 @@ log = logging.getLogger(__name__)
 
 
 def _memory() -> MemoryManager:
-    return MemoryManager(home_dir() / "sessions.sqlite3")
+    return MemoryManager(database_path())
 
 
 async def _plan_task(arguments: dict[str, Any], context: ToolContext) -> str:

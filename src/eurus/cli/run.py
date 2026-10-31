@@ -94,7 +94,7 @@ def chat(ctx: click.Context, stream: bool, session_id: str | None) -> None:
                 err=True,
             )
 
-        privacy_store = SessionStore(paths.home_dir() / "sessions.sqlite3")
+        privacy_store = SessionStore(paths.database_path())
         store = privacy_store if session_id else None
         if store is not None and session_id is not None:
             resume_id = store.latest_session_descendant(session_id)

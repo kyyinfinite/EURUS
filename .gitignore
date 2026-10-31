@@ -39,5 +39,10 @@ EURUS_PYTEST_LIVE.txt
 pip-wheel-metadata/
 *.egg
 .coverage.*
-cache/
+.cache/
 .eurus/
+
+# Web gateway frontend
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo

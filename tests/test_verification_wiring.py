@@ -200,8 +200,8 @@ def test_run_command_creates_durable_run_record(tmp_path, monkeypatch):
     )
     result = CliRunner().invoke(main, ["--config", str(config_file), "run", "say hi"], env={})
     assert result.exit_code == 0, result.output
-    runs = RunStore(tmp_path / "sessions.sqlite3")
-    events = EventStore(tmp_path / "sessions.sqlite3")
+    runs = RunStore(tmp_path / "data" / "eurus.sqlite3")
+    events = EventStore(tmp_path / "data" / "eurus.sqlite3")
     history = runs.list_runs(limit=10)
     assert len(history) == 1
     stored = history[0]

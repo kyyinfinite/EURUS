@@ -46,6 +46,7 @@ class PendingApproval:
     future: asyncio.Future[bool]
     fingerprint: str = ""
     expires_at: float = float("inf")
+    display_notice: str = ""
 
 
 Notifier = Callable[[str, str], Awaitable[None]]
@@ -199,6 +200,30 @@ class ApprovalBroker:
         notice = f"\n[{hidden} more characters not shown]" if hidden else ""
         return shown, notice
 
+    def _render_prompt(
+        self,
+        context: ApprovalContext,
+        pending: PendingApproval,
+        tool_name: str,
+        fingerprint: str,
+    ) -> str:
+        """Render the human-facing prompt for a pending approval.
+
+        Subclasses may override this to surface approvals through other
+        channels; the safety machinery (limits, persistence, timeouts) is
+        shared and must not be bypassed.
+        """
+        return (
+            "Owner approval required\n"
+            f"Task: {context.task_id[:8]}\n"
+            f"Tool: {tool_name}\n"
+            f"Arguments: {pending.arguments_json}{pending.display_notice}\n"
+            f"Action: {fingerprint[:12]}\n"
+            f"Approve: /approve {pending.token}\n"
+            f"Deny: /deny {pending.token}\n"
+            f"Expires in {int(self.timeout)} seconds."
+        )
+
     async def approve(self, call: ToolCall, tool: Tool) -> bool:
         context = current_approval_context.get()
         notifier = self.notifier
@@ -218,6 +243,7 @@ class ApprovalBroker:
             future=asyncio.get_running_loop().create_future(),
             fingerprint=fingerprint,
             expires_at=self.clock() + self.timeout,
+            display_notice=notice,
         )
         async with self._lock:
             owned = sum(1 for item in self.pending.values() if item.owner_id == context.owner_id)
@@ -239,16 +265,7 @@ class ApprovalBroker:
                 type(exc).__name__,
             )
             return False
-        prompt = (
-            "Owner approval required\n"
-            f"Task: {context.task_id[:8]}\n"
-            f"Tool: {tool.name}\n"
-            f"Arguments: {shown}{notice}\n"
-            f"Action: {fingerprint[:12]}\n"
-            f"Approve: /approve {token}\n"
-            f"Deny: /deny {token}\n"
-            f"Expires in {int(self.timeout)} seconds."
-        )
+        prompt = self._render_prompt(context, pending, tool.name, fingerprint)
         decision = False
         try:
             if state_callback is not None:

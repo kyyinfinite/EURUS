@@ -23,7 +23,7 @@ def sessions_list() -> None:
     table = Table(title="sessions")
     for column in ("ID", "Title", "Messages", "Updated"):
         table.add_column(column)
-    for item in SessionStore(paths.home_dir() / "sessions.sqlite3").list_sessions():
+    for item in SessionStore(paths.database_path()).list_sessions():
         table.add_row(
             str(item["id"]),
             str(item["title"]),
@@ -36,7 +36,7 @@ def sessions_list() -> None:
 @sessions_group.command("show")
 @click.argument("session_id")
 def sessions_show(session_id: str) -> None:
-    store = SessionStore(paths.home_dir() / "sessions.sqlite3")
+    store = SessionStore(paths.database_path())
     messages = store.load_messages(session_id)
     if not messages:
         raise click.ClickException(f"session not found or empty: {session_id}")
@@ -49,7 +49,7 @@ def sessions_show(session_id: str) -> None:
 @sessions_group.command("summarize")
 @click.argument("session_id")
 def sessions_summarize(session_id: str) -> None:
-    store = SessionStore(paths.home_dir() / "sessions.sqlite3")
+    store = SessionStore(paths.database_path())
     messages = store.load_messages(session_id)
     if not messages:
         raise click.ClickException(f"session not found or empty: {session_id}")
@@ -73,7 +73,7 @@ def learn_group() -> None:
     help="Delete exact duplicate memories after showing the plan.",
 )
 def learn_consolidate(apply: bool) -> None:
-    store = SessionStore(paths.home_dir() / "sessions.sqlite3")
+    store = SessionStore(paths.database_path())
     result = store.consolidate_memories(dry_run=not apply)
     action = "deleted" if apply else "would delete"
     click.echo(
@@ -88,6 +88,6 @@ def learn_consolidate(apply: bool) -> None:
 @click.argument("session_id")
 @click.confirmation_option(prompt="Delete this session and its messages?")
 def sessions_delete(session_id: str) -> None:
-    if not SessionStore(paths.home_dir() / "sessions.sqlite3").delete_session(session_id):
+    if not SessionStore(paths.database_path()).delete_session(session_id):
         raise click.ClickException(f"session not found: {session_id}")
     click.echo(f"deleted session {session_id}")

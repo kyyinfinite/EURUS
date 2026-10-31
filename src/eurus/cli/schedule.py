@@ -54,7 +54,7 @@ def schedule_add(
 
     if (run_at is None) == (interval_seconds is None):
         raise click.ClickException("provide exactly one of --at or --every")
-    store = ScheduleStore(paths.home_dir() / "sessions.sqlite3")
+    store = ScheduleStore(paths.database_path())
     try:
         profile = store.get_profile(owner, profile_name) if profile_name else None
         if profile_name and profile is None:
@@ -90,7 +90,7 @@ def schedule_profile_save(
 ) -> None:
     from eurus.scheduler import ScheduleStore, TaskProfile
 
-    store = ScheduleStore(paths.home_dir() / "sessions.sqlite3")
+    store = ScheduleStore(paths.database_path())
     profile = TaskProfile(
         name=name,
         timezone=timezone,
@@ -110,7 +110,7 @@ def schedule_profile_save(
 def schedule_list(owner: str) -> None:
     from eurus.scheduler import ScheduleStore
 
-    schedules = ScheduleStore(paths.home_dir() / "sessions.sqlite3").list_owner(owner)
+    schedules = ScheduleStore(paths.database_path()).list_owner(owner)
     table = Table(title=f"Schedules for {owner}")
     for column in ("ID", "State", "Kind", "Next run (UTC)", "Objective"):
         table.add_column(column)
@@ -131,7 +131,7 @@ def schedule_list(owner: str) -> None:
 def schedule_enable(schedule_id: str, owner: str) -> None:
     from eurus.scheduler import ScheduleStore
 
-    store = ScheduleStore(paths.home_dir() / "sessions.sqlite3")
+    store = ScheduleStore(paths.database_path())
     item = next(
         (entry for entry in store.list_owner(owner) if entry.schedule_id.startswith(schedule_id)),
         None,
@@ -147,7 +147,7 @@ def schedule_enable(schedule_id: str, owner: str) -> None:
 def schedule_disable(schedule_id: str, owner: str) -> None:
     from eurus.scheduler import ScheduleStore
 
-    store = ScheduleStore(paths.home_dir() / "sessions.sqlite3")
+    store = ScheduleStore(paths.database_path())
     item = next(
         (entry for entry in store.list_owner(owner) if entry.schedule_id.startswith(schedule_id)),
         None,
@@ -163,7 +163,7 @@ def schedule_disable(schedule_id: str, owner: str) -> None:
 def schedule_history(schedule_id: str, owner: str) -> None:
     from eurus.scheduler import ScheduleStore
 
-    store = ScheduleStore(paths.home_dir() / "sessions.sqlite3")
+    store = ScheduleStore(paths.database_path())
     item = next(
         (entry for entry in store.list_owner(owner) if entry.schedule_id.startswith(schedule_id)),
         None,
@@ -181,7 +181,7 @@ def schedule_cancel_run(job_id: str, owner: str) -> None:
     from eurus.scheduler import ScheduleStore
     from eurus.storage.jobs import JobStore
 
-    database_path = paths.home_dir() / "sessions.sqlite3"
+    database_path = paths.database_path()
     jobs = JobStore(database_path)
     job = next(
         (
@@ -212,7 +212,7 @@ def schedule_daemon(ctx: click.Context, poll_seconds: int, workers: int, owner: 
     from eurus.storage.jobs import Job, JobStore
 
     config = _state(ctx).config
-    database_path = paths.home_dir() / "sessions.sqlite3"
+    database_path = paths.database_path()
     store = ScheduleStore(database_path)
     jobs = JobStore(database_path)
     events = EventStore(jobs.database)

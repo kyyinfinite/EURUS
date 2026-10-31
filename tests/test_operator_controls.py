@@ -11,7 +11,7 @@ from eurus.storage.runs import RunStore
 
 def stores(tmp_path, monkeypatch):
     monkeypatch.setenv("EURUS_HOME", str(tmp_path))
-    database = tmp_path / "sessions.sqlite3"
+    database = tmp_path / "data" / "eurus.sqlite3"
     return RunStore(database), EventStore(database)
 
 

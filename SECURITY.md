@@ -22,7 +22,7 @@ Use `eurus.security.journal.AuditJournal` for newline-delimited JSON audit recor
 
 ## Local sessions and memory
 
-Chat history and explicit memory notes are stored in `$EURUS_HOME/sessions.sqlite3` when session persistence or memory commands are used. The database is created with owner-only permissions where supported. Do not put credentials, access tokens, or other secrets into persistent chat history or memory notes.
+Chat history and explicit memory notes are stored in `$EURUS_HOME/data/eurus.sqlite3` (migrated from the legacy `$EURUS_HOME/sessions.sqlite3` on first use) when session persistence or memory commands are used. The database is created with owner-only permissions where supported. Do not put credentials, access tokens, or other secrets into persistent chat history or memory notes.
 
 Relevant saved memories are injected into model prompts under a bounded character budget, labeled as memories and kept separate from lessons. Memory writes are screened against secret patterns and sensitive personal-information indicators, and quarantined (untrusted) memories are excluded from prompts. The application should treat memory contents as untrusted context, not executable instructions.
 

@@ -26,7 +26,7 @@ from eurus.storage.runs import ConcurrentRunUpdate, RunStore
 
 
 def _runtime_stores() -> tuple[RunStore, EventStore]:
-    database = paths.home_dir() / "sessions.sqlite3"
+    database = paths.database_path()
     return RunStore(database), EventStore(database)
 
 

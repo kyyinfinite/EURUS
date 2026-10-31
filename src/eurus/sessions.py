@@ -248,6 +248,23 @@ class SessionStore:
                 [(row[0], row[1], row[2], row[4], row[3]) for row in searchable],
             )
 
+    def create_session(self, session_id: str, title: str = "New conversation") -> bool:
+        """Insert an empty session row so interfaces can list it before the first message.
+
+        Returns True when a new row was created, False when the session already existed.
+        """
+        if not session_id.strip():
+            raise ValueError("session id must not be empty")
+        clean_title = title.strip()[:80] or "New conversation"
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """INSERT INTO sessions(id, title, created_at, updated_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(id) DO NOTHING""",
+                (session_id, clean_title, _now(), _now()),
+            )
+        return cursor.rowcount > 0
+
     def load_messages(self, session_id: str) -> list[Message]:
         with self._connection() as connection:
             rows = connection.execute(

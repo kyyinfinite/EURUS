@@ -28,6 +28,7 @@ from eurus.skills.tools import skill_tools
 from eurus.tools.base import ToolContext, ToolRegistry
 from eurus.tools.builtin import default_registry
 from eurus.tools.shell import shell_tool
+from eurus.workspace import WorkspaceManager
 
 
 def build_agent(
@@ -49,8 +50,10 @@ def build_agent(
     plan: bool | None = None,
 ) -> Agent:
     root = (workspace or Path(config.permissions.workspace)).expanduser().resolve()
+    workspaces = WorkspaceManager(root)
     context = ToolContext(
         workspace=root,
+        workspaces=workspaces,
         max_output=config.tools.max_output_chars,
         timeout=config.tools.timeout_seconds,
     )
@@ -93,7 +96,7 @@ def build_agent(
             tools.register(tool)
     settings = config.learning
     store = LessonStore(
-        paths.home_dir() / "sessions.sqlite3",
+        paths.database_path(),
         limit=settings.lessons_in_prompt,
         max_lessons=settings.max_lessons,
     )
@@ -134,10 +137,10 @@ def build_agent(
         max_parallel_tools=config.tools.max_parallel_tools,
         context_tokens=config.agent.context_tokens,
         context_engine=context_engine,
-        lessons=PromptMemory(paths.home_dir() / "sessions.sqlite3", store, scope=str(root)),
+        lessons=PromptMemory(paths.database_path(), store, scope=str(root)),
         memory_manager=(
             MemoryManager(
-                paths.home_dir() / "sessions.sqlite3",
+                paths.database_path(),
                 max_memories=config.memory.max_memories,
                 retention_days=config.memory.retention_days,
                 max_content_chars=config.memory.max_content_chars,

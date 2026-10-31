@@ -71,7 +71,7 @@ def browser_status(ctx: click.Context) -> None:
         "cdp endpoint",
         browser.cdp_endpoint or ("(launched locally)"),
     )
-    table.add_row("profile", browser.profile_dir or str(paths.home_dir() / "browser" / "profile"))
+    table.add_row("profile", browser.profile_dir or str(paths.home_manager().browser_profile_dir))
     table.add_row(
         "navigation timeout",
         f"{browser.navigation_timeout_seconds:g}s "
@@ -144,9 +144,9 @@ def browser_login(ctx: click.Context, url: str, timeout: float) -> None:
     profile = (
         Path(settings.profile_dir)
         if settings.profile_dir
-        else (paths.home_dir() / "browser" / "profile")
+        else paths.home_manager().browser_profile_dir
     )
-    profile.mkdir(parents=True, exist_ok=True)
+    paths.ensure_private_dir(profile)
 
     async def _login() -> None:
         from eurus.browser.cdp_backend import CdpBackend

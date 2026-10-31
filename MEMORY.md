@@ -1,6 +1,6 @@
 # Eurus Memory
 
-Eurus stores long-lived memory in the existing `sessions.sqlite3` database. SQLite FTS5 is used for bounded keyword retrieval; no vector service or new dependency is required.
+Eurus stores long-lived memory in the runtime database `~/.eurus/data/eurus.sqlite3` (migrated from the legacy `~/.eurus/sessions.sqlite3` on first use). SQLite FTS5 is used for bounded keyword retrieval; no vector service or new dependency is required.
 
 ## Configuration
 

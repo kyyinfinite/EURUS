@@ -41,6 +41,7 @@ sdk = ["groq>=0.13", "google-genai>=1.0"]
 mcp = ["mcp>=1.27,<2"]
 google = ["keyring>=25", "cryptography>=42"]
 telegram = ["aiogram>=3.29,<4"]
+web-gateway = ["fastapi>=0.115", "uvicorn>=0.30", "pydantic>=2.7", "python-multipart>=0.0.9"]
 browser = ["playwright>=1.50"]
 browser-cdp = ["websockets>=12"]
 documents = ["python-docx>=1.1", "openpyxl>=3.1", "python-pptx>=1.0"]
@@ -57,6 +58,8 @@ dev = [
     "trafilatura>=2.2.0",
     "keyring>=25",
     "cryptography>=42",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
 ]
 
 [project.scripts]
@@ -97,7 +100,7 @@ files = ["src"]
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = ["mcp", "mcp.*", "aiogram", "aiogram.*", "pptx", "pptx.*", "trafilatura", "ddgs", "playwright", "playwright.*", "websockets", "websockets.*", "keyring", "keyring.*", "cryptography", "cryptography.*", "uvicorn", "uvicorn.*", "openpyxl", "openpyxl.*"]
+module = ["mcp", "mcp.*", "aiogram", "aiogram.*", "pptx", "pptx.*", "trafilatura", "ddgs", "playwright", "playwright.*", "websockets", "websockets.*", "keyring", "keyring.*", "cryptography", "cryptography.*", "uvicorn", "uvicorn.*", "openpyxl", "openpyxl.*", "fastapi", "fastapi.*", "starlette", "starlette.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
@@ -108,3 +111,7 @@ disallow_untyped_decorators = false
 [[tool.mypy.overrides]]
 module = "eurus.gateway.telegram.approval"
 follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = ["eurus.gateway.web.*"]
+disallow_untyped_decorators = false
