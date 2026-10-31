@@ -3,8 +3,7 @@
  *
  *  Honest scope note: this lists the canonical media store (uploads made
  *  through any interface). Files the agent writes into its workspace are not
- *  part of this store — exposing them needs a workspace-artifacts endpoint
- *  (documented in docs/WEB_GATEWAY.md).
+ *  part of this store — exposing them needs a workspace-artifacts endpoint.
  */
 
 import { useMemo, useState } from "react";

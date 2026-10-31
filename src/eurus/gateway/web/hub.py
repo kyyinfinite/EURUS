@@ -1,3 +1,20 @@
+"""WebSocket hub and durable event tailing for the web gateway.
+
+Two event sources, one stream:
+
+* Gateway-owned runs are streamed live: the run task publishes agent events
+  (from the canonical ``AgentEventBridge`` inside ``AgentRuntime``) straight
+  to subscribed sockets.
+* Runs owned by other interfaces (TUI, CLI, Telegram) are observed through
+  the durable ``EventStore`` — the same ordered runtime events the engine
+  persists for every run. A periodic tailer picks up active runs of
+  subscribed sessions and streams new events by ``sequence_no`` cursor, so
+  nothing is duplicated and missed events survive client reconnects
+  (clients re-sync via the REST snapshot endpoints).
+
+The hub is a presentation/transport concern; it never mutates agent state.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -25,6 +42,8 @@ ACTIVE_STATUSES = frozenset(
     }
 )
 
+# Runs whose row was last touched longer ago than this are treated as stale
+# remnants of a dead process rather than genuinely active work.
 ACTIVITY_WINDOW_SECONDS = 2 * 3600.0
 TAIL_INTERVAL_SECONDS = 0.6
 SWEEP_INTERVAL_SECONDS = 2.0
@@ -56,6 +75,8 @@ def _parse_ts(value: Any) -> float | None:
 
 @dataclass(slots=True)
 class WebRunHandle:
+    """A run currently executing inside the gateway process."""
+
     run_id: str
     session_id: str
     started_at: float = field(default_factory=time.monotonic)
@@ -63,6 +84,8 @@ class WebRunHandle:
 
 
 class SessionHub:
+    """Fan-out of gateway events to authenticated WebSocket clients."""
+
     def __init__(self, run_store: RunStore, event_store: EventStore) -> None:
         self.run_store = run_store
         self.event_store = event_store
@@ -72,6 +95,8 @@ class SessionHub:
         self._known_external: set[str] = set()
         self._tailer: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
+
+    # -- connection management -------------------------------------------------
 
     async def attach(self, websocket: Any) -> None:
         async with self._lock:
@@ -103,6 +128,8 @@ class SessionHub:
             sessions.update(subscribed)
         return sessions
 
+    # -- outbound --------------------------------------------------------------
+
     async def broadcast(self, session_id: str | None, payload: dict[str, Any]) -> None:
         targets = [
             ws
@@ -120,6 +147,8 @@ class SessionHub:
                 with contextlib.suppress(Exception):
                     await websocket.close()
                 self._subscriptions.pop(websocket, None)
+
+    # -- web-owned runs --------------------------------------------------------
 
     def register_web_run(self, handle: WebRunHandle) -> None:
         self.web_runs[handle.run_id] = handle
@@ -164,6 +193,8 @@ class SessionHub:
                 "origin": origin,
             },
         )
+
+    # -- durable tailer --------------------------------------------------------
 
     def start_tailer(self) -> None:
         if self._tailer is None or self._tailer.done():

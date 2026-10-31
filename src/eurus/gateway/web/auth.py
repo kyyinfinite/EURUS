@@ -1,3 +1,20 @@
+"""Local-only security for the web gateway.
+
+Threat model: a single owner running everything on their own machine. The
+gateway must still protect against other local users, drive-by browser
+requests from other sites (CSRF), and DNS rebinding. Mechanisms:
+
+* Loopback binding by default (enforced by the CLI; the app rejects
+  non-loopback Host headers regardless of the socket binding).
+* A per-installation random token persisted to ``~/.eurus/gateway-web.json``
+  (0600). All API routes and WebSocket upgrades require it except
+  ``GET /api/health``.
+* Origin/Referer validation on every state-changing request and on WebSocket
+  upgrades (CSRF + rebinding defence; the token alone cannot help if another
+  website can read it — it cannot, but defence in depth is free here).
+* JSON error responses; no HTML reflection; no secrets in responses.
+"""
+
 from __future__ import annotations
 
 import json
@@ -19,6 +36,8 @@ LOOPBACK_HOSTS = frozenset(
 
 
 class GatewayCredentialStore:
+    """Persists the gateway access token under the EURUS home directory."""
+
     def __init__(self, path: Path | None = None) -> None:
         self.path = path if path is not None else paths.home_dir() / CREDENTIAL_FILE
 
@@ -66,6 +85,8 @@ def _request_origin(request: Any) -> str:
 
 
 class GatewaySecurity:
+    """Request guards shared by HTTP middleware and WebSocket upgrades."""
+
     def __init__(self, token: str, *, port: int, host: str) -> None:
         if not token:
             raise ValueError("gateway token must not be empty")
@@ -100,6 +121,7 @@ class GatewaySecurity:
         return secrets.compare_digest(presented, self.token)
 
     def check_http(self, request: Any, *, require_token: bool = True) -> tuple[bool, str]:
+        """Return (allowed, reason) for an HTTP API request."""
         host_header = request.headers.get("host", "")
         if not self.host_allowed(host_header):
             return False, "invalid host header"

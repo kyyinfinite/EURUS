@@ -25,6 +25,7 @@ from eurus.errors import (
     ModelRefError,
     PolicyError,
 )
+from eurus.execution.sandbox import Sandbox
 from eurus.learning.skills import SkillLearner
 from eurus.models import Message, ToolCall, ToolResult, Usage
 from eurus.providers.base import ToolSpec
@@ -246,6 +247,7 @@ class Agent:
         self._recent_keys: list[str] = []
         self._iteration_results: list[AgentEvent] = []
         self.run_id: str | None = None
+        self.sandbox: Sandbox | None = None
 
     @property
     def context(self) -> ToolContext:

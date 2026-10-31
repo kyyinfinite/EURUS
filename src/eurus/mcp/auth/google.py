@@ -223,7 +223,7 @@ class GoogleOAuthManager:
             raise OAuthFlowError(
                 "Google OAuth client is not configured. Set EURUS_GOOGLE_CLIENT_ID and "
                 "EURUS_GOOGLE_CLIENT_SECRET, or create "
-                "<eurus-home>/auth/google/client.json - see docs/GOOGLE_OAUTH.md"
+                "<eurus-home>/auth/google/client.json"
             )
         requested_scopes = list(scopes or DEFAULT_SCOPES)
         port = _loopback_port_of(client.redirect_uri)

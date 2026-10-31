@@ -1,3 +1,11 @@
+"""Pydantic schemas for the local web gateway API.
+
+The Python domain models (``eurus.models``, ``eurus.runtime.models``) remain
+the source of truth for semantics; these schemas are the transport contract
+between the gateway and the React frontend. They never wrap arbitrary
+internal objects and never carry secret values.
+"""
+
 from __future__ import annotations
 
 from typing import Any, Literal

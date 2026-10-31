@@ -1,3 +1,22 @@
+"""Canonical runtime wiring for the web gateway.
+
+This module owns the web process's :class:`eurus.runtime.application.AgentRuntime`
+instance and its agent/engine factories. It mirrors the wiring used by the
+Telegram gateway (``eurus gateway telegram``) so every interface constructs
+agents the same way:
+
+* ``build_agent`` supplies the tool registry, MCP tools, reminders and the
+  web approval broker.
+* ``AgentRuntime(require_engine=True)`` forces every run through the durable
+  :class:`eurus.runtime.engine.AgentEngine`.
+* Engine stores come from the shared helpers in :mod:`eurus.cli.common` and
+  point at the single ``~/.eurus/data/eurus.sqlite3`` database that the TUI,
+  CLI and Telegram gateway already use.
+
+There is intentionally no web-specific agent loop, verification path or tool
+executor in this module.
+"""
+
 from __future__ import annotations
 
 import contextlib

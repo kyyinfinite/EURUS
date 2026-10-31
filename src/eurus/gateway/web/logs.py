@@ -1,3 +1,12 @@
+"""In-process log capture for the gateway diagnostics page.
+
+Attaches a bounded ring-buffer handler to the ``eurus`` logger so the
+frontend can display recent runtime logs without touching log files.
+Messages pass through the same secret redaction helper the file formatter
+uses (:func:`eurus.logs.redact`) with the secrets collected from the active
+configuration.
+"""
+
 from __future__ import annotations
 
 import contextlib

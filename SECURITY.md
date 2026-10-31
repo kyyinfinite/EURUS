@@ -1,31 +1,40 @@
-# Security policy
+# Security Policy
+
+Eurus is pre-alpha software that can run tools on your machine. Please take security reports seriously and report them privately.
 
 ## Reporting a vulnerability
 
-Do not open a public issue for security problems. Use the GitHub private vulnerability reporting feature on this repository.
+Do not open a public issue for security problems. Use GitHub's **private vulnerability reporting** on this repository (Security tab, then "Report a vulnerability").
 
-Include the affected version, reproduction steps and impact. You will get an acknowledgement within 7 days.
+Please include the affected version, steps to reproduce, and the impact. You will get an acknowledgement within 7 days. Please allow time for a fix before any public disclosure.
+
+## Supported versions
+
+Only the latest release receives security fixes while the project is pre-alpha.
 
 ## Scope
 
-Issues of particular interest: shell or filesystem confinement bypass, permission or approval bypass, API key leakage in logs or journals, and prompt injection that leads to unapproved actions.
+Of particular interest:
 
-## Shell execution
+- Shell or filesystem confinement bypass, including sandbox escape and symlink or path-traversal tricks.
+- Approval or permission bypass, including execution of mutating tools without an approver.
+- Leakage of API keys, tokens, or other secrets through logs, traces, journals, or the model context.
+- Prompt injection that leads to unapproved actions.
+- Authentication, origin, or host-check bypass in the web gateway or the MCP server.
 
-Shell commands run through the configured container runtime. Eurus does not fall back to host execution when the runtime is unavailable. The default container has no network, a read-only root filesystem, dropped Linux capabilities, `no-new-privileges`, and CPU, memory, PID, timeout, and output limits. The configured workspace is mounted writable; review and back up workspace contents before approving commands.
+Out of scope: issues that require an already-approved malicious action, running with sandboxing disabled (Termux host mode), or attacks that need prior control of the user's machine or home directory.
 
-Mutating tools require an approval provider. If no provider is configured, the agent denies the action. CLI approval is scoped to the displayed tool call; changing the command requires a new approval. Sandbox isolation depends on the host container runtime and its configuration and is not a substitute for reviewing untrusted code.
+## Security model in brief
 
-## Audit journal
+- **Fail-closed approvals.** Mutating tools are denied when no approver is available.
+- **Isolated shell.** Commands run in a container with no network and dropped capabilities, and never fall back to the host. On Termux the host backend is used, and the approval gate is the only control.
+- **Local by default.** The web gateway and MCP HTTP server bind to loopback and require a bearer token.
+- **Secrets stay out.** Event payloads, logs, and traces are redacted, and Google tokens use the OS keyring or an encrypted file, never plaintext.
 
-Use `eurus.security.journal.AuditJournal` for newline-delimited JSON audit records. The journal creates files with owner-only permissions where supported. Do not include credentials or raw secrets in event fields.
+## Your responsibilities
 
-## Local sessions and memory
-
-Chat history and explicit memory notes are stored in `$EURUS_HOME/data/eurus.sqlite3` (migrated from the legacy `$EURUS_HOME/sessions.sqlite3` on first use) when session persistence or memory commands are used. The database is created with owner-only permissions where supported. Do not put credentials, access tokens, or other secrets into persistent chat history or memory notes.
-
-Relevant saved memories are injected into model prompts under a bounded character budget, labeled as memories and kept separate from lessons. Memory writes are screened against secret patterns and sensitive personal-information indicators, and quarantined (untrusted) memories are excluded from prompts. The application should treat memory contents as untrusted context, not executable instructions.
-
-## Shell execution on Termux
-
-On Android Termux, Eurus defaults to the non-isolated host sandbox backend with `sandbox.required = false`: there is no container isolation, and the approval gate is the only control before a command runs. Review every approval carefully in this mode.
+- Review every approval. A changed command needs a new approval.
+- Run Eurus in a disposable workspace and keep backups of anything valuable.
+- Never put credentials into chat history or memory notes.
+- Keep `.env` and credential files out of version control.
+- Treat the container sandbox as unvalidated until you have verified it on your own host.

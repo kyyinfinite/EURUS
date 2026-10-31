@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from pathlib import Path
 
@@ -16,6 +17,13 @@ from eurus.agent.team_tools import document_team_tools
 from eurus.agent.verification import RuntimeVerificationService
 from eurus.coding.project_index import render_project_index_cached
 from eurus.config import Config
+from eurus.execution.docker import resolve_seccomp_profile
+from eurus.execution.envelope import (
+    ExecutionEnvelope,
+    IsolationBackend,
+    NetworkProfile,
+    ResourceBudget,
+)
 from eurus.execution.host import HostSandbox
 from eurus.execution.sandbox import ContainerSandbox, Sandbox
 from eurus.learning import LessonStore, Reflector
@@ -24,11 +32,42 @@ from eurus.memory.manager import MemoryManager, PromptMemory
 from eurus.providers.factory import build_auxiliary_router
 from eurus.providers.router import Router
 from eurus.runtime.instrumentation import span
+from eurus.security.journal import AuditJournal
 from eurus.skills.tools import skill_tools
 from eurus.tools.base import ToolContext, ToolRegistry
 from eurus.tools.builtin import default_registry
 from eurus.tools.shell import shell_tool
 from eurus.workspace import WorkspaceManager
+
+log = logging.getLogger(__name__)
+
+
+def _execution_journal() -> AuditJournal:
+    home = paths.home_manager()
+    home.ensure_dir(home.security_dir)
+    return AuditJournal(home.security_dir / "execution.jsonl")
+
+
+def _build_envelope(config: Config, root: Path) -> ExecutionEnvelope:
+    if config.sandbox.backend == "host":
+        backend = IsolationBackend.HOST
+        profile = NetworkProfile.OFFLINE
+    else:
+        backend = IsolationBackend.CONTAINER
+        profile = NetworkProfile.WEB_READ if config.sandbox.network else NetworkProfile.OFFLINE
+    budget = ResourceBudget(
+        memory_mb=config.sandbox.memory_mb,
+        cpu_limit=config.sandbox.cpu_limit,
+        pids_limit=config.sandbox.pids_limit,
+        timeout_seconds=config.tools.timeout_seconds,
+        max_output_bytes=config.tools.max_output_chars,
+    )
+    return ExecutionEnvelope.authorize(
+        workspace_root=str(root),
+        backend=backend,
+        network_profile=profile,
+        budget=budget,
+    )
 
 
 def build_agent(
@@ -51,11 +90,13 @@ def build_agent(
 ) -> Agent:
     root = (workspace or Path(config.permissions.workspace)).expanduser().resolve()
     workspaces = WorkspaceManager(root)
+    envelope = _build_envelope(config, root)
     context = ToolContext(
         workspace=root,
         workspaces=workspaces,
         max_output=config.tools.max_output_chars,
         timeout=config.tools.timeout_seconds,
+        envelope=envelope,
     )
     auxiliary_router = build_auxiliary_router(config)
     tools = (
@@ -71,10 +112,17 @@ def build_agent(
     from eurus.browser.integration import ensure_browser_tools
 
     ensure_browser_tools(tools, config.browser, workspace=root)
+    sandbox: Sandbox | None = None
     if shell and "shell" not in tools:
-        sandbox: Sandbox
+        journal = _execution_journal()
         if config.sandbox.backend == "host":
             sandbox = HostSandbox(root)
+            log.warning("sandbox backend is 'host': commands run on this device without isolation")
+            journal.record(
+                "execution.host_mode",
+                workspace=str(root),
+                isolated=False,
+            )
         else:
             sandbox = ContainerSandbox(
                 root,
@@ -84,6 +132,15 @@ def build_agent(
                 cpu_limit=config.sandbox.cpu_limit,
                 pids_limit=config.sandbox.pids_limit,
                 network_enabled=config.sandbox.network,
+                user=config.sandbox.user,
+                image_allowlist=config.sandbox.image_allowlist,
+                digest_pin_required=config.sandbox.digest_pin_required,
+                seccomp_profile=resolve_seccomp_profile(
+                    config.sandbox.seccomp_profile,
+                    system_dir=paths.home_manager().system_dir,
+                ),
+                apparmor_profile=config.sandbox.apparmor_profile,
+                security_event=lambda event, fields: journal.record(event, **fields),
             )
         tools.register(shell_tool(sandbox))
     for tool in [
@@ -155,6 +212,8 @@ def build_agent(
         background_event_sink=background_event_sink,
         event_recorder=event_recorder,
     )
+    if sandbox is not None:
+        agent.sandbox = sandbox
     verification_on = config.verification.enabled if verify is None else verify
     if verification_on:
         service = RuntimeVerificationService(

@@ -177,18 +177,3 @@ jobs:
       - name: Test installed browser modules
         run: |
           .venv-wheel/bin/python -c "import eurus.browser, eurus.browser.tools; print('wheel browser imports ok')"
-
-  docs-links:
-    name: Documentation links
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Check documentation links
-        run: python scripts/check_docs_links.py

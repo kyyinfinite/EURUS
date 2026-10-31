@@ -1,3 +1,13 @@
+"""Approval broker for the local web gateway.
+
+Extends :class:`eurus.gateway.approval.ApprovalBroker` so pending tool
+approvals are surfaced to connected browser clients over WebSocket while
+reusing the canonical safety machinery: pending limits, owner lockout,
+durable decision persistence, timeouts and fail-closed behaviour. The
+broker is the only approval authority for runs executed by the web
+gateway; the frontend can never execute tools directly.
+"""
+
 from __future__ import annotations
 
 import contextlib
@@ -18,6 +28,7 @@ WEB_OWNER_ID = "web"
 
 
 def _envelope(pending: PendingApproval, session_id: str) -> dict[str, Any]:
+    """Serializable snapshot of a pending approval (arguments already redacted)."""
     return {
         "token": pending.token,
         "run_id": pending.task_id,
@@ -31,6 +42,14 @@ def _envelope(pending: PendingApproval, session_id: str) -> dict[str, Any]:
 
 
 class WebApprovalBroker(ApprovalBroker):
+    """Approval broker whose prompts are broadcast to browser clients.
+
+    The parent class owns the entire approval lifecycle. This subclass only
+    replaces the prompt rendering (a JSON envelope instead of a Telegram
+    string) and adds REST/WS helpers. ``resolve`` remains the single
+    authoritative decision entry point with duplicate protection.
+    """
+
     def __init__(
         self,
         *,
@@ -44,6 +63,7 @@ class WebApprovalBroker(ApprovalBroker):
         self.notifier = self._notify
 
     async def _notify(self, chat_id: str, prompt: str) -> None:
+        """Deliver the JSON envelope rendered by ``_render_prompt`` to browsers."""
         with contextlib.suppress(ValueError):
             payload = json.loads(prompt)
             if isinstance(payload, dict):
@@ -61,7 +81,8 @@ class WebApprovalBroker(ApprovalBroker):
         tool_name: str,
         fingerprint: str,
     ) -> str:
-
+        # The notifier receives a JSON envelope so connected browsers get a
+        # structured event; other consumers never see raw arguments.
         return json.dumps(
             _envelope(pending, self._session_for(pending)),
             ensure_ascii=False,
@@ -75,7 +96,7 @@ class WebApprovalBroker(ApprovalBroker):
             ]
 
     async def resolve_for_session(self, token: str, *, session_id: str, allowed: bool) -> bool:
-
+        """Resolve a pending approval after verifying the session binding."""
         async with self._lock:
             pending = self.pending.get(token)
             if pending is None or self._session_for(pending) != session_id:

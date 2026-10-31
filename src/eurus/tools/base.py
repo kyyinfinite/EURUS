@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from eurus.errors import ToolError
+from eurus.execution.envelope import ExecutionEnvelope
 from eurus.models import ToolCall, ToolResult
 from eurus.providers.base import INVALID_ARGUMENTS_KEY, ToolSpec
 from eurus.tools.schema import validate_arguments
@@ -44,6 +45,7 @@ class ToolContext:
     max_child_iterations: int | None = None
     event_sink: Callable[[str, dict[str, Any]], None] | None = None
     workspaces: WorkspaceManager | None = None
+    envelope: ExecutionEnvelope | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +59,7 @@ class Tool:
     parallel_safe: bool = True
     interactive: bool = False
     path_keys: tuple[str, ...] = ()
+    required_capabilities: tuple[str, ...] = ()
 
     def spec(self) -> ToolSpec:
         return ToolSpec(self.name, self.description, self.parameters)

@@ -266,6 +266,16 @@ class AgentEngine:
         if hasattr(self.agent, "set_run_state_provider"):
             self.agent.set_run_state_provider(None)
 
+    async def _reconcile_sandbox_orphans(self) -> None:
+        sandbox = getattr(self.agent, "sandbox", None)
+        reconcile = getattr(sandbox, "reconcile_orphans", None)
+        if reconcile is None:
+            return
+        try:
+            await reconcile()
+        except Exception:
+            log.debug("sandbox orphan reconciliation failed", exc_info=True)
+
     async def run(
         self,
         objective: str,
@@ -301,6 +311,7 @@ class AgentEngine:
         runtime_events_total = 0
         self._bind_run_context(runtime_run, spec)
         self.agent.run_id = runtime_run.run_id
+        await self._reconcile_sandbox_orphans()
         self._seed_attempt_evidence(runtime_run.run_id, flow)
         self._attach_boundary_recorders(runtime_run.run_id, flow)
 

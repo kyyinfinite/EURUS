@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from eurus.errors import ToolError
+from eurus.execution.envelope import envelope_violation
 from eurus.models import ToolCall, ToolResult
 from eurus.providers.base import INVALID_ARGUMENTS_KEY
 from eurus.runtime.contracts import ToolExecutionOutcome, ToolExecutionStatus
@@ -202,13 +203,17 @@ class ToolExecutionBoundary:
         run_id: str | None,
         status: ToolExecutionStatus,
     ) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "tool": tool.name,
             "call_id": call.id,
             "attempt_id": attempt,
             "run_id": run_id,
             "status": status.value,
         }
+        envelope = self.context.envelope
+        if envelope is not None:
+            payload["envelope_id"] = envelope.envelope_id
+        return payload
 
     def _denied(
         self,
@@ -282,6 +287,33 @@ class ToolExecutionBoundary:
             )
             await self._record(outcome)
             return outcome
+        envelope = self.context.envelope
+        if envelope is not None:
+            violation = envelope_violation(
+                envelope,
+                tool_name=tool.name,
+                required_capabilities=tool.required_capabilities,
+                run_id=run_id,
+            )
+            if violation is not None:
+                cancelled = envelope.cancellation is not None and envelope.cancellation.cancelled
+                outcome = self._denied(
+                    call,
+                    ToolExecutionStatus.CANCELLED if cancelled else ToolExecutionStatus.DENIED,
+                    violation,
+                    run_id=run_id,
+                )
+                await self._record(outcome)
+                await self._emit(
+                    "envelope.violation",
+                    {
+                        "tool": tool.name,
+                        "envelope_id": envelope.envelope_id,
+                        "reason": violation,
+                        "run_id": run_id,
+                    },
+                )
+                return outcome
         risk = classify_risk(tool)
         key = call_key(call)
         if tool.mutates:
@@ -418,6 +450,7 @@ class ToolExecutionBoundary:
                         )
                     )
                     await self._run_before_mutation(call, tool)
+                dispatch_envelope = self.context.envelope
                 await self._emit(
                     "tool.started",
                     {
@@ -426,6 +459,9 @@ class ToolExecutionBoundary:
                         "attempt_id": attempt,
                         "run_id": run_id,
                         "risk_level": risk.risk_level,
+                        "envelope_id": (
+                            dispatch_envelope.envelope_id if dispatch_envelope is not None else ""
+                        ),
                     },
                 )
                 try:

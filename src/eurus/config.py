@@ -38,6 +38,8 @@ TOP_LEVEL_KEYS = frozenset(
 )
 PROVIDER_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 HEADER_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*$")
+SANDBOX_USER_PATTERN = re.compile(r"^(auto|[a-z_][a-z0-9_-]{0,31}|\d{1,5}(:\d{1,5})?)$")
+APPARMOR_PATTERN = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 FALSE_VALUES = frozenset({"0", "false", "no", "off"})
 
@@ -113,6 +115,11 @@ network = false
 memory_mb = 1024
 cpu_limit = 1.0
 pids_limit = 128
+user = "auto"
+image_allowlist = []
+digest_pin_required = false
+seccomp_profile = ""
+apparmor_profile = ""
 """
 
 
@@ -188,6 +195,11 @@ class SandboxConfig:
     memory_mb: int = 1024
     cpu_limit: float = 1.0
     pids_limit: int = 128
+    user: str = "auto"
+    image_allowlist: tuple[str, ...] = ()
+    digest_pin_required: bool = False
+    seccomp_profile: str = ""
+    apparmor_profile: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -797,6 +809,11 @@ def _build_sandbox(raw: Mapping[str, Any], env: Mapping[str, str]) -> SandboxCon
             "memory_mb",
             "cpu_limit",
             "pids_limit",
+            "user",
+            "image_allowlist",
+            "digest_pin_required",
+            "seccomp_profile",
+            "apparmor_profile",
         },
         "sandbox",
     )
@@ -811,6 +828,11 @@ def _build_sandbox(raw: Mapping[str, Any], env: Mapping[str, str]) -> SandboxCon
     memory_mb = _get(section, "memory_mb", int, 1024, "sandbox")
     cpu_limit = _get(section, "cpu_limit", float, 1.0, "sandbox")
     pids_limit = _get(section, "pids_limit", int, 128, "sandbox")
+    user = _get(section, "user", str, "auto", "sandbox").strip()
+    image_allowlist_raw = _get(section, "image_allowlist", list, [], "sandbox")
+    digest_pin_required = _get(section, "digest_pin_required", bool, False, "sandbox")
+    seccomp_profile = _get(section, "seccomp_profile", str, "", "sandbox").strip()
+    apparmor_profile = _get(section, "apparmor_profile", str, "", "sandbox").strip()
     if backend not in SANDBOX_BACKENDS:
         allowed = ", ".join(repr(item) for item in SANDBOX_BACKENDS)
         raise ConfigError(f"sandbox.backend currently supports only {allowed}")
@@ -824,8 +846,30 @@ def _build_sandbox(raw: Mapping[str, Any], env: Mapping[str, str]) -> SandboxCon
         raise ConfigError("sandbox.cpu_limit must be between 0.1 and 64")
     if not 16 <= pids_limit <= 4096:
         raise ConfigError("sandbox.pids_limit must be between 16 and 4096")
+    if not SANDBOX_USER_PATTERN.match(user):
+        raise ConfigError("sandbox.user must be 'auto', a user name, a numeric uid, or uid:gid")
+    image_allowlist: list[str] = []
+    for entry in image_allowlist_raw:
+        text = str(entry).strip()
+        if not text or any(character.isspace() for character in text) or text.startswith("-"):
+            raise ConfigError(f"sandbox.image_allowlist contains an invalid entry: {entry!r}")
+        image_allowlist.append(text)
+    if apparmor_profile and not APPARMOR_PATTERN.match(apparmor_profile):
+        raise ConfigError("sandbox.apparmor_profile must be a profile name")
     return SandboxConfig(
-        backend, runtime, image, required, network, memory_mb, cpu_limit, pids_limit
+        backend,
+        runtime,
+        image,
+        required,
+        network,
+        memory_mb,
+        cpu_limit,
+        pids_limit,
+        user,
+        tuple(image_allowlist),
+        digest_pin_required,
+        seccomp_profile,
+        apparmor_profile,
     )
 
 

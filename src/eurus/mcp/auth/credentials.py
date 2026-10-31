@@ -4,7 +4,7 @@ EURUS is an installed desktop application, so the recommended Google Cloud
 console setup is an OAuth 2.0 client of type "Desktop app" (or a "Web
 application" with an explicit redirect URI). Google's Workspace MCP servers
 additionally require the "Use this client for an AI-powered agent" option on
-the OAuth client; see docs/GOOGLE_OAUTH.md.
+the OAuth client.
 
 Credentials are read from, in order:
 

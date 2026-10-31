@@ -55,6 +55,20 @@ network = false
 memory_mb = 1024
 cpu_limit = 1.0
 pids_limit = 128
+# auto maps the host uid:gid into the container (falls back to 1000:1000
+# when eurus itself runs as root); a fixed value like "1000:1000" or a
+# name like "nobody" is passed to docker --user verbatim.
+user = "auto"
+# When non-empty, the configured image must match one of these references.
+# image_allowlist = ["python:3.12-alpine", "docker.io/library/alpine:3.20"]
+# Require name@sha256:<digest> references instead of mutable tags.
+digest_pin_required = false
+# "" uses the Docker default seccomp profile; "default" installs the
+# bundled hardened allowlist into <home>/system/docker/; or give a path
+# to your own profile JSON.
+seccomp_profile = ""
+# Optional AppArmor profile name applied via --security-opt (where supported).
+apparmor_profile = ""
 
 [browser]
 enabled = false

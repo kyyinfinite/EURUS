@@ -1,3 +1,11 @@
+"""FastAPI application for the local EURUS web gateway.
+
+The app is a thin transport layer over :class:`eurus.gateway.web.service.GatewayService`.
+It adds no behaviour of its own beyond request validation, authentication and
+payload shaping. The React frontend build is served from the same process so
+production use is a single command.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -7,9 +15,10 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Any
 
 from fastapi import (
+    Depends,
     FastAPI,
     File,
     Form,
@@ -77,10 +86,14 @@ def create_app(ctx: GatewayContext, *, static_dir: Path | None = None) -> FastAP
             content=_error_payload("internal", f"{type(exc).__name__}: {exc}"),
         )
 
+    # -- middleware: local security -------------------------------------------
+
     @app.middleware("http")
     async def security_middleware(request: Request, call_next: Any) -> Any:
         path = request.url.path
         if path.startswith("/api"):
+            # Only the liveness probe is usable without a token; it stays
+            # host-checked and is read-only.
             exempt = path == "/api/health" and request.method == "GET"
             allowed, reason = ctx.security.check_http(request, require_token=not exempt)
             if not allowed:
@@ -91,6 +104,8 @@ def create_app(ctx: GatewayContext, *, static_dir: Path | None = None) -> FastAP
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Cache-Control"] = "no-store" if path.startswith("/api") else "no-cache"
         return response
+
+    # -- health & runtime -------------------------------------------------------
 
     @app.get("/api/health")
     async def health() -> dict[str, Any]:
@@ -113,6 +128,8 @@ def create_app(ctx: GatewayContext, *, static_dir: Path | None = None) -> FastAP
     async def diagnostics() -> dict[str, Any]:
         return service.diagnostics()
 
+    # -- sessions ----------------------------------------------------------------
+
     @app.get("/api/sessions")
     async def list_sessions() -> list[dict[str, Any]]:
         return await service.list_sessions()
@@ -134,6 +151,8 @@ def create_app(ctx: GatewayContext, *, static_dir: Path | None = None) -> FastAP
     async def send_message(session_id: str, payload: SendMessageRequest) -> dict[str, Any]:
         return await service.send_message(session_id, payload.text, payload.attachments)
 
+    # -- media -----------------------------------------------------------------------
+
     @app.get("/api/media")
     async def list_media(
         session_id: str | None = None, limit: int = Query(default=200, ge=1, le=1000)
@@ -142,8 +161,7 @@ def create_app(ctx: GatewayContext, *, static_dir: Path | None = None) -> FastAP
 
     @app.post("/api/media", status_code=201)
     async def upload_media(
-        session_id: Annotated[str, Form()],
-        file: Annotated[UploadFile, File()],
+        session_id: str = Form(...), file: UploadFile = File(...)
     ) -> dict[str, Any]:
         data = await file.read()
         return await service.upload_media(
@@ -161,7 +179,7 @@ def create_app(ctx: GatewayContext, *, static_dir: Path | None = None) -> FastAP
             path,
             media_type=media.mime,
             filename=media.filename,
-            headers={"Content-Disposition": f'inline; filename="{media.filename}"'},
+            headers={"Content-Disposition": f"inline; filename=\"{media.filename}\""},
         )
 
     @app.delete("/api/media/{media_id}")
@@ -170,6 +188,8 @@ def create_app(ctx: GatewayContext, *, static_dir: Path | None = None) -> FastAP
         if not deleted:
             raise ServiceError("not_found", f"unknown media {media_id}")
         return {"deleted": True, "id": media_id}
+
+    # -- runs ----------------------------------------------------------------------
 
     @app.get("/api/runs")
     async def list_runs(
@@ -191,6 +211,8 @@ def create_app(ctx: GatewayContext, *, static_dir: Path | None = None) -> FastAP
     async def cancel_run(run_id: str) -> dict[str, Any]:
         return await service.cancel_run(run_id)
 
+    # -- approvals -------------------------------------------------------------------
+
     @app.get("/api/approvals")
     async def pending_approvals() -> list[dict[str, Any]]:
         return await service.pending_approvals()
@@ -204,6 +226,8 @@ def create_app(ctx: GatewayContext, *, static_dir: Path | None = None) -> FastAP
             raise ServiceError("invalid", "approval token is not pending or session mismatch")
         return {"resolved": True, "decision": payload.decision}
 
+    # -- configuration ------------------------------------------------------------------
+
     @app.get("/api/config")
     async def read_config() -> dict[str, Any]:
         return service.read_config()
@@ -211,6 +235,8 @@ def create_app(ctx: GatewayContext, *, static_dir: Path | None = None) -> FastAP
     @app.patch("/api/config")
     async def patch_config(payload: ConfigPatchRequest) -> dict[str, Any]:
         return await service.patch_config(payload.section, payload.values)
+
+    # -- providers / tools / mcp ------------------------------------------------------------
 
     @app.get("/api/providers")
     async def providers() -> list[dict[str, Any]]:
@@ -227,6 +253,8 @@ def create_app(ctx: GatewayContext, *, static_dir: Path | None = None) -> FastAP
     @app.get("/api/mcp")
     async def mcp_status() -> dict[str, Any]:
         return service.mcp_status()
+
+    # -- memory ---------------------------------------------------------------------------
 
     @app.get("/api/memory")
     async def list_memories(
@@ -252,12 +280,16 @@ def create_app(ctx: GatewayContext, *, static_dir: Path | None = None) -> FastAP
             raise ServiceError("invalid", "trust level rejected or memory missing")
         return {"updated": True, "id": memory_id, "trust": trust}
 
+    # -- logs ---------------------------------------------------------------------------------
+
     @app.get("/api/logs")
     async def logs(
         after_sequence: int = Query(default=0, ge=0),
         limit: int = Query(default=200, ge=1, le=500),
     ) -> list[dict[str, Any]]:
         return service.log_snapshot(after_sequence, limit)
+
+    # -- websocket -------------------------------------------------------------------------------
 
     @app.websocket("/api/ws")
     async def websocket_endpoint(websocket: WebSocket) -> None:
@@ -301,6 +333,8 @@ def create_app(ctx: GatewayContext, *, static_dir: Path | None = None) -> FastAP
         finally:
             await ctx.hub.detach(websocket)
 
+    # -- static frontend ---------------------------------------------------------------------------
+
     dist = _resolve_static_dir(static_dir)
 
     @app.get("/{full_path:path}", include_in_schema=False)
@@ -309,8 +343,7 @@ def create_app(ctx: GatewayContext, *, static_dir: Path | None = None) -> FastAP
             return HTMLResponse(
                 "<h1>EURUS Web Gateway</h1><p>Frontend build not found. "
                 "Build it with <code>npm ci &amp;&amp; npm run build</code> inside "
-                "<code>frontend/</code>, or run the Vite dev server instead. "
-                "See docs/WEB_GATEWAY.md.</p>",
+                "<code>frontend/</code>, or run the Vite dev server instead.</p>",
                 status_code=200,
             )
         if full_path:
@@ -365,7 +398,12 @@ def build_context(
     security: Any,
     approval_timeout: float = 600.0,
 ) -> GatewayContext:
+    """Wire the gateway context around the canonical runtime (startup path).
 
+    Everything here already exists in EURUS: the SQLite stores, the approval
+    broker, the agent runtime and the engine helpers. This function only
+    assembles them for the web process.
+    """
     import time
 
     from eurus import paths
@@ -412,6 +450,7 @@ async def serve(
     open_browser: bool = False,
     static_dir: Path | None = None,
 ) -> None:
+    """Run the gateway until interrupted (entry point for ``eurus gateway web``)."""
     import webbrowser
 
     import uvicorn

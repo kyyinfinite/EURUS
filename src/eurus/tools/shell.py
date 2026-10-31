@@ -24,12 +24,20 @@ async def _run_shell(
         raise ToolError("cwd is outside the workspace")
     if not cwd.is_dir():
         raise ToolError("cwd does not exist")
+    profile = "offline"
+    envelope = context.envelope
+    if envelope is not None:
+        profile = envelope.network_profile.value
     result = await sandbox.execute(
         ExecutionRequest(
             argv=("/bin/sh", "-c" if is_termux() else "-lc", command),
             cwd="/workspace" if relative == "." else f"/workspace/{relative}",
             timeout_seconds=context.timeout,
             max_output_bytes=context.max_output,
+            network_enabled=profile != "offline",
+            network_profile=profile,
+            run_id=context.run_id or "",
+            workspace_id=str(context.workspace),
         )
     )
     sections = []
@@ -75,4 +83,5 @@ def shell_tool(sandbox: Sandbox) -> Tool:
         handler=handler,
         mutates=True,
         requires_approval=True,
+        required_capabilities=("shell.execute",),
     )

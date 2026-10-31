@@ -1,3 +1,12 @@
+"""Interface-independent application services for the web gateway.
+
+Every method here delegates to canonical EURUS stores and runtime objects
+(``SessionStore``, ``RunStore``, ``EventStore``, ``AgentRuntime`` via
+:class:`eurus.gateway.web.runtime.WebRuntime`, ``TomlManager``). No agent
+logic, verification logic or persistence lives in this module — it only
+orchestrates existing components and shapes the results for transport.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -70,6 +79,8 @@ class ServiceError(Exception):
 
 @dataclass(slots=True)
 class GatewayContext:
+    """Everything the FastAPI routes need, wired once at startup."""
+
     config: Config
     store: SessionStore
     run_store: RunStore
@@ -88,15 +99,20 @@ class GatewayContext:
 
 
 class GatewayService:
+    """Orchestrates canonical EURUS components for the HTTP/WebSocket API."""
+
     def __init__(self, ctx: GatewayContext) -> None:
         self.ctx = ctx
         self._media_store: MediaStore | None = None
 
     @property
     def media(self) -> MediaStore:
+        """Canonical media store (lazy: creates ~/.eurus/media on first use)."""
         if self._media_store is None:
             self._media_store = MediaStore(database=self.ctx.store.path)
         return self._media_store
+
+    # -- helpers ---------------------------------------------------------------
 
     def _session_exists(self, session_id: str) -> bool:
         return any(row["id"] == session_id for row in self.ctx.store.list_sessions())
@@ -157,6 +173,8 @@ class GatewayService:
             )
         return views
 
+    # -- sessions ---------------------------------------------------------------
+
     async def list_sessions(self) -> list[dict[str, Any]]:
         rows = await asyncio.to_thread(self.ctx.store.list_sessions)
         active_by_session: dict[str, str] = {}
@@ -197,6 +215,8 @@ class GatewayService:
         messages = await asyncio.to_thread(self.ctx.store.load_messages, session_id)
         return self._message_views(messages)
 
+    # -- chat execution ----------------------------------------------------------
+
     async def send_message(
         self, session_id: str, text: str, attachments: list[str] | None = None
     ) -> dict[str, Any]:
@@ -225,16 +245,23 @@ class GatewayService:
         handle.task = task
         return {"session_id": session_id, "run_id": run_id}
 
-    def _resolve_attachments(self, session_id: str, media_ids: list[str]) -> list[Any]:
+    def _resolve_attachments(
+        self, session_id: str, media_ids: list[str]
+    ) -> list[Any]:
+        """Load media rows for a send, enforcing session ownership."""
         rows = []
         for media_id in media_ids[:8]:
             row = self.media.get(media_id)
             if row is None:
                 raise ServiceError("not_found", f"unknown attachment {media_id}")
             if row.session_id != session_id:
-                raise ServiceError("invalid", f"attachment {media_id} belongs to another session")
+                raise ServiceError(
+                    "invalid", f"attachment {media_id} belongs to another session"
+                )
             rows.append(row)
         return rows
+
+    # -- media ---------------------------------------------------------------------
 
     async def upload_media(
         self, session_id: str, filename: str, content_type: str | None, data: bytes

@@ -51,6 +51,8 @@ def capability_view(protocol: str) -> dict[str, Any]:
     return {
         "capabilities": capabilities,
         "multimodal": bool(
-            capabilities["imageInput"] or capabilities["audioInput"] or capabilities["videoInput"]
+            capabilities["imageInput"]
+            or capabilities["audioInput"]
+            or capabilities["videoInput"]
         ),
     }
