@@ -162,7 +162,12 @@ class TestChatExecution:
         assert conflict.status_code == 409
         assert conflict.json()["error"]["code"] == "run_active"
 
-        # Cleanup: cancel the hanging run through the API.
+        _poll(
+            client,
+            f"/api/runs/{run_id}",
+            lambda body: body["status"] == "running",
+            timeout=30,
+        )
         cancelled = client.post(f"/api/runs/{run_id}/cancel", headers=AUTH)
         assert cancelled.status_code == 200
         _poll(
