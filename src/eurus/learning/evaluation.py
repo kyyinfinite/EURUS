@@ -23,8 +23,10 @@ EVALUATION_DIMENSIONS = frozenset(
         "recovery_effectiveness",
         "agent_performance",
         "resource_efficiency",
+        "verification_coverage",
     }
 )
+LEARNING_MARKER_DIMENSION = "plan_quality"
 EVALUATORS = frozenset({"deterministic", "agent"})
 LESSON_MIN_LENGTH = 15
 LESSON_MAX_LENGTH = 200

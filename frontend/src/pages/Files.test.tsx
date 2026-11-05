@@ -1,6 +1,3 @@
-/** Files page tests — uploads grid, the Phase 7 artifacts surface and its
- *  Phase 9 cursor pagination. */
-
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

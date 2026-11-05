@@ -381,6 +381,61 @@ export interface MissionArtifactView {
   created_at: string;
 }
 
+export interface ArtifactView extends MissionArtifactView {
+  name: string;
+  source_tool: string;
+  run_id: string;
+  expires_at: string | null;
+}
+
+export interface ArtifactPage {
+  items: ArtifactView[];
+  next_cursor: string | null;
+  total: number;
+}
+
+export interface MissionLessonView {
+  lesson_id: string;
+  text: string;
+  mission_id?: string;
+}
+
+export interface MissionRoleStats {
+  role: string;
+  tasks: number;
+  succeeded: number;
+  failed: number;
+  blocked: number;
+  revisions: number;
+}
+
+export interface MissionAnalyticsView {
+  missions_total: number;
+  missions_learned: number;
+  decisions: Record<string, number>;
+  expired: number;
+  dimension_means: Record<string, number>;
+  roles: MissionRoleStats[];
+  lessons: MissionLessonView[];
+}
+
+export interface MissionEvaluationView {
+  dimension: string;
+  score: number;
+  passed: boolean;
+  evidence: string[];
+  created_at: string;
+}
+
+export interface MissionLearningView {
+  mission_id: string;
+  status: string;
+  objective: string;
+  learned: boolean;
+  evaluations: MissionEvaluationView[];
+  lessons: MissionLessonView[];
+}
+
 export interface MissionVerificationView {
   check_name: string;
   status: string;

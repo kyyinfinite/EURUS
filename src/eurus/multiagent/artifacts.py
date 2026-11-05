@@ -13,6 +13,7 @@ from eurus.multiagent.contracts import ArtifactRef
 from eurus.storage.database import Database, DatabasePath
 
 MAX_ARTIFACT_BYTES = 10 * 1024 * 1024
+STANDALONE_MISSION_ID = "standalone"
 _MAX_METADATA_KEYS = 32
 
 
@@ -60,6 +61,15 @@ class ArtifactRecord:
     metadata: dict[str, Any]
     allowed_recipients: tuple[str, ...]
     created_at: datetime
+    name: str = ""
+    source_tool: str = ""
+    run_id: str = ""
+    expires_at: datetime | None = None
+
+    def is_expired(self, now: datetime | None = None) -> bool:
+        if self.expires_at is None:
+            return False
+        return self.expires_at <= (now or _now())
 
     def to_ref(self) -> ArtifactRef:
         return ArtifactRef(
@@ -86,6 +96,10 @@ class ArtifactRecord:
             "metadata": dict(self.metadata),
             "allowed_recipients": list(self.allowed_recipients),
             "created_at": _time(self.created_at),
+            "name": self.name,
+            "source_tool": self.source_tool,
+            "run_id": self.run_id,
+            "expires_at": _time(self.expires_at) if self.expires_at is not None else None,
         }
 
 
@@ -113,6 +127,10 @@ class ArtifactStore:
         artifact_type: str,
         media_type: str = "text/plain",
         metadata: dict[str, Any] | None = None,
+        name: str = "",
+        source_tool: str = "",
+        run_id: str = "",
+        expires_at: datetime | None = None,
     ) -> ArtifactRecord:
         if not owner_id.strip() or not mission_id.strip():
             raise ArtifactError("owner_id and mission_id are required")
@@ -120,6 +138,11 @@ class ArtifactStore:
             raise ArtifactError("artifact_type is required")
         if metadata is not None and len(metadata) > _MAX_METADATA_KEYS:
             raise ArtifactError("too many metadata keys")
+        if expires_at is not None:
+            if expires_at.tzinfo is None:
+                raise ArtifactError("expires_at must include a timezone")
+            if expires_at <= _now():
+                raise ArtifactError("expires_at must be in the future")
         data = content.encode("utf-8") if isinstance(content, str) else content
         if not data:
             raise ArtifactError("artifact content must not be empty")
@@ -144,8 +167,8 @@ class ArtifactStore:
                         artifact_id, owner_id, mission_id, task_id, assignment_id,
                         artifact_type, media_type, storage_key, content_hash,
                         size_bytes, version, metadata_json, allowed_recipients_json,
-                        created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        created_at, name, source_tool, run_id, expires_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         artifact_id,
                         owner_id,
@@ -161,6 +184,10 @@ class ArtifactStore:
                         json.dumps(metadata or {}),
                         json.dumps([]),
                         _time(_now()),
+                        name.strip(),
+                        source_tool.strip(),
+                        run_id.strip(),
+                        _time(expires_at) if expires_at is not None else None,
                     ),
                 )
         except BaseException:
@@ -186,6 +213,8 @@ class ArtifactStore:
 
     def read(self, artifact_id: str, *, owner_id: str, assignment_id: str | None = None) -> bytes:
         record = self._require(artifact_id, owner_id)
+        if record.is_expired():
+            raise ArtifactError(f"artifact {artifact_id} has expired")
         self._authorize(record, assignment_id)
         path = self._path_for(record)
         if not path.is_file():
@@ -228,6 +257,55 @@ class ArtifactStore:
                 (owner_id, mission_id),
             ).fetchall()
         return [self._record(row) for row in rows]
+
+    def list_for_run(self, owner_id: str, run_id: str) -> list[ArtifactRecord]:
+        if not run_id.strip():
+            raise ArtifactError("run_id is required")
+        with self.database.connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM eurus_agent_artifacts "
+                "WHERE owner_id=? AND run_id=? ORDER BY created_at, artifact_id",
+                (owner_id, run_id.strip()),
+            ).fetchall()
+        return [self._record(row) for row in rows]
+
+    def list_recent(
+        self, owner_id: str, *, limit: int = 50, include_expired: bool = False
+    ) -> list[ArtifactRecord]:
+        bounded = max(1, min(int(limit), 500))
+        clause = "" if include_expired else "AND (expires_at IS NULL OR expires_at > ?) "
+        params: tuple[Any, ...] = (owner_id,)
+        if not include_expired:
+            params += (_time(_now()),)
+        with self.database.connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM eurus_agent_artifacts "
+                f"WHERE owner_id=? {clause}"
+                "ORDER BY created_at DESC, artifact_id DESC LIMIT ?",
+                (*params, bounded),
+            ).fetchall()
+        return [self._record(row) for row in rows]
+
+    def purge_expired(self, *, now: datetime | None = None) -> int:
+        cutoff = _time(now or _now())
+        with self.database.connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM eurus_agent_artifacts "
+                "WHERE expires_at IS NOT NULL AND expires_at <= ?",
+                (cutoff,),
+            ).fetchall()
+            doomed = [self._record(row) for row in rows]
+            for record in doomed:
+                connection.execute(
+                    "DELETE FROM eurus_agent_artifacts WHERE artifact_id=? AND owner_id=?",
+                    (record.artifact_id, record.owner_id),
+                )
+        for record in doomed:
+            try:
+                self._path_for(record).unlink(missing_ok=True)
+            except (ArtifactError, OSError):
+                continue
+        return len(doomed)
 
     def _authorize(self, record: ArtifactRecord, assignment_id: str | None) -> None:
         if assignment_id is None:
@@ -283,6 +361,10 @@ class ArtifactStore:
             metadata=_json_dict(row["metadata_json"]),
             allowed_recipients=tuple(_json_list(row["allowed_recipients_json"])),
             created_at=_parse(row["created_at"]) or _now(),
+            name=str(row["name"] or ""),
+            source_tool=str(row["source_tool"] or ""),
+            run_id=str(row["run_id"] or ""),
+            expires_at=_parse(row["expires_at"]),
         )
 
 

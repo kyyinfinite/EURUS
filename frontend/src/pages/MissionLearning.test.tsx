@@ -1,7 +1,3 @@
-/** Mission learning surfaces — Phase 8 tests.
- *  Analytics mission intelligence aggregate and the Missions detail post-mortem.
- */
-
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";

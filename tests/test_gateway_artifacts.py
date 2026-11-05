@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -32,7 +33,7 @@ def gateway(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture()
-def client(gateway):  # noqa: ANN001
+def client(gateway: tuple[TestClient, Any]) -> TestClient:
     return gateway[0]
 
 

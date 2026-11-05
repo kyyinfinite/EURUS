@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { ChatArtifact } from "../lib/artifacts";
 
 export type ToastTone = "info" | "ok" | "warn" | "danger";
 
@@ -31,6 +32,9 @@ interface UIState {
   commandPaletteOpen: boolean;
   setCommandPaletteOpen: (open: boolean) => void;
   toggleCommandPalette: () => void;
+  artifact: ChatArtifact | null;
+  openArtifact: (artifact: ChatArtifact) => void;
+  closeArtifact: () => void;
   toasts: Toast[];
   pushToast: (toast: Omit<Toast, "id">) => void;
   dismissToast: (id: number) => void;
@@ -95,6 +99,9 @@ export const useUI = create<UIState>((set, get) => ({
   commandPaletteOpen: false,
   setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
   toggleCommandPalette: () => set((state) => ({ commandPaletteOpen: !state.commandPaletteOpen })),
+  artifact: null,
+  openArtifact: (artifact) => set({ artifact }),
+  closeArtifact: () => set({ artifact: null }),
   toasts: [],
   pushToast: (toast) => {
     const id = toastSeq++;

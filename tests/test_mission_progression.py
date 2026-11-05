@@ -341,7 +341,7 @@ class TestMissionProgressionTick:
         assert tasks["ui"].attempt == 2
         assert report.dispatched
 
-    async def test_tick_isolates_per_mission_failures(self, tmp_path: Path) -> None:
+    async def test_tick_isolates_per_mission_failures(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         stack = Stack(tmp_path)
         good = _seed_mission(stack)
         broken = stack.supervisor.create_mission("Broken mission", owner_id=OWNER)
@@ -358,7 +358,7 @@ class TestMissionProgressionTick:
                 raise RuntimeError("supervision exploded")
             return original(mission_id, **kwargs)
 
-        stack.progression.supervision.tick = failing_tick  # type: ignore[method-assign]
+        monkeypatch.setattr(stack.progression.supervision, "tick", failing_tick)
         report = stack.progression.tick(owner_id=OWNER)
         assert report.missions_checked == 2
         assert report.dispatched, "the healthy mission still progresses"

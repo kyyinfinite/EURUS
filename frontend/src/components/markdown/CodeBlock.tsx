@@ -28,17 +28,19 @@ function CodeBlockImpl({
   lang: rawLang,
   pending = false,
   mermaid = false,
+  defaultExpanded = false,
 }: {
   code: string;
   lang: string;
   pending?: boolean;
   mermaid?: boolean;
+  defaultExpanded?: boolean;
 }) {
   const lang = normalizeLang(rawLang);
   const [html, setHtml] = useState<string | null>(null);
   const [highlighting, setHighlighting] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const [lineNumbers, setLineNumbers] = useState(readLineNumbersPref);
   const timerRef = useRef<number | null>(null);
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import UTC, datetime
 
-LATEST_SCHEMA_VERSION = 14
+LATEST_SCHEMA_VERSION = 15
 
 _MIGRATIONS: dict[int, tuple[str, ...]] = {
     1: (
@@ -549,6 +549,15 @@ _MIGRATIONS: dict[int, tuple[str, ...]] = {
         "CREATE INDEX eurus_runs_stale_heartbeat ON eurus_runs(status, heartbeat_at)",
     ),
     14: ("ALTER TABLE eurus_event_deliveries ADD COLUMN claim_token TEXT NOT NULL DEFAULT ''",),
+    15: (
+        "ALTER TABLE eurus_agent_artifacts ADD COLUMN name TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE eurus_agent_artifacts ADD COLUMN source_tool TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE eurus_agent_artifacts ADD COLUMN run_id TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE eurus_agent_artifacts ADD COLUMN expires_at TEXT",
+        "CREATE INDEX eurus_agent_artifacts_run ON eurus_agent_artifacts(owner_id, run_id)",
+        "CREATE INDEX eurus_agent_artifacts_recent "
+        "ON eurus_agent_artifacts(owner_id, created_at, artifact_id)",
+    ),
 }
 
 

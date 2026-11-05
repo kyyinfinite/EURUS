@@ -19,6 +19,7 @@ from eurus.workspace import WorkspaceManager
 
 if TYPE_CHECKING:
     from eurus.research.engine import ResearchEngine
+    from eurus.tools.artifacts import ArtifactProvider
 
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 HEAD_SHARE = 0.7
@@ -71,6 +72,9 @@ class ToolContext:
     research_engine: ResearchEngine | None = None
     budget_tracker: BudgetTracker | None = None
     child_budget_caps: ChildBudgetCaps | None = None
+    mission_id: str | None = None
+    task_id: str | None = None
+    artifacts: ArtifactProvider | None = None
 
     def remaining_seconds(self, now: float | None = None) -> float | None:
         if self.deadline_at is None:
