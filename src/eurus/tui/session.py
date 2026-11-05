@@ -1,0 +1,1282 @@
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import inspect
+import logging
+import os
+import re
+import signal
+import time
+import uuid
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from eurus import paths
+from eurus.agent.events import AgentEvent
+from eurus.agent.factory import build_agent
+from eurus.agent.loop import Agent
+from eurus.catalog import resolve_api_key
+from eurus.coding.checkpoint import CheckpointStore
+from eurus.config import Config
+from eurus.errors import EurusError
+from eurus.mcp.runtime import MCPRuntime
+from eurus.memory.manager import MemoryManager
+from eurus.models import Message, ModelRef, ToolCall, Usage
+from eurus.providers.discovery import Discovery, discover
+from eurus.providers.factory import build_router
+from eurus.providers.policy import is_local_url
+from eurus.providers.router import Router
+from eurus.runtime import instrumentation
+from eurus.runtime.application import AgentRuntime
+from eurus.runtime.instrumentation import record, span
+from eurus.security.approval import SessionScopedApprover, approval_request
+from eurus.sessions import SessionStore
+from eurus.skills import list_skills
+from eurus.storage.database import Database
+from eurus.tools import Tool, ToolRegistry, default_registry
+from eurus.tui import appearance, themes
+from eurus.tui import prefs as view_prefs
+from eurus.tui.commands import COMMANDS, resolve, suggest
+from eurus.tui.info import config_rows, credential_note, describe, shell_label
+from eurus.tui.picker import (
+    active_ref,
+    filter_models,
+    page_bounds,
+    page_size,
+    parse_choice,
+    provider_rows,
+    with_active_first,
+)
+from eurus.tui.prefs import ViewPrefs
+from eurus.tui.renderer import ALLOW_ANSWERS, StreamView, TerminalRenderer
+from eurus.tui.state import AgentState
+from eurus.tui.theme import Theme
+
+if TYPE_CHECKING:
+    from eurus.tui.prompt import PromptBox
+    from eurus.tui.terminal import Recolor
+
+log = logging.getLogger(__name__)
+
+Handler = Callable[[str], Awaitable[None] | None]
+
+
+def _schedule_store() -> Any:
+    from eurus.scheduler import ScheduleStore
+
+    return ScheduleStore(paths.database_path())
+
+
+@dataclass(slots=True)
+class TurnStats:
+    tool_calls: int = 0
+    pending: int = 0
+    spoke: bool = False
+    saw_text: bool = False
+    usage: Usage = field(default_factory=Usage)
+
+
+class SigintCancel:
+    def __init__(self, task: asyncio.Task[None]) -> None:
+        self._task = task
+        self._armed = False
+
+    def arm(self) -> None:
+        if self._armed:
+            return
+        try:
+            asyncio.get_running_loop().add_signal_handler(signal.SIGINT, self._task.cancel)
+        except (NotImplementedError, RuntimeError, ValueError):
+            return
+        self._armed = True
+
+    def disarm(self) -> None:
+        if not self._armed:
+            return
+        asyncio.get_running_loop().remove_signal_handler(signal.SIGINT)
+        self._armed = False
+
+
+class InteractiveSession:
+    def __init__(self, config: Config, renderer: TerminalRenderer | None = None) -> None:
+        self.config = config
+        self.renderer = renderer or TerminalRenderer()
+        self.prefs: ViewPrefs = view_prefs.load()
+        self.renderer.markdown_enabled = self.prefs.markdown
+        self.renderer.stream_preview = self.prefs.stream_preview
+        self.history: list[Message] = []
+        self.session_id = str(uuid.uuid4())
+        self.session_store = SessionStore(paths.database_path())
+        self.memory = MemoryManager(paths.database_path())
+        self.running = True
+        self.picker: PromptBox | None = None
+        self.recolor: Recolor | None = None
+        self.state = AgentState.IDLE
+        self.usage = Usage()
+        self.retry_prompt = ""
+        self.registry: ToolRegistry = default_registry(
+            include_capability_tools=True, include_workflow_tools=True
+        )
+        from eurus.schedule_tools import schedule_tool
+
+        self.registry.register(schedule_tool(_schedule_store()))
+        self.mcp_runtime = MCPRuntime.build(paths.home_dir())
+        self.mcp = self.mcp_runtime.manager
+        self.session_approver = SessionScopedApprover(self._approve)
+        self._runtime: AgentRuntime | None = None
+        self._runtime_loop: asyncio.AbstractEventLoop | None = None
+        self._cached_router: Router | None = None
+        self._cached_agent: Agent | None = None
+        self._cached_signature: str | None = None
+        self._engine_database: Database | None = None
+        self._engine_stores: tuple[Any, Any, Any] | None = None
+        self._cached_checkpoint_store: CheckpointStore | None = None
+        self._cached_pricing: Any = None
+        self._cancel: SigintCancel | None = None
+        self._view: StreamView | None = None
+        self._catalog: dict[str, Discovery] = {}
+        self._autonomy: Any = None
+        self.autonomy_inbox: list[dict[str, Any]] = []
+        self._hooks: Any = None
+        self._step_counter: Any = None
+        self._run_id: str | None = None
+        self._handlers: dict[str, Handler] = {
+            "/help": self._help,
+            "/model": self._model,
+            "/models": self._models,
+            "/provider": self._provider,
+            "/skills": self._skills,
+            "/memory": self._memory,
+            "/theme": self._theme,
+            "/font": self._font,
+            "/glyphs": self._glyphs,
+            "/sessions": self._sessions,
+            "/resume": self._resume,
+            "/tools": self._tools,
+            "/browser": self._browser,
+            "/grants": self._grants,
+            "/mcp": self._mcp_status,
+            "/status": self._status,
+            "/schedule": self._schedule,
+            "/jobs": self._jobs,
+            "/autonomy": self._autonomy_cmd,
+            "/config": self._config,
+            "/workspace": self._workspace,
+            "/settings": self._settings,
+            "/compact": self._compact,
+            "/undo": self._undo,
+            "/retry": self._retry,
+            "/clear": self._clear,
+            "/exit": self._exit,
+        }
+
+    @property
+    def workspace(self) -> Path:
+        return Path(self.config.permissions.workspace).expanduser().resolve()
+
+    def _help(self, _: str) -> None:
+        self.renderer.palette(COMMANDS)
+        self.renderer.console.print(self.renderer.shortcuts())
+
+    def _ask(self, label: str) -> str | None:
+        if self._cancel is not None:
+            self._cancel.disarm()
+        try:
+            return self.renderer.ask(self.renderer.menu_prompt(label))
+        except (KeyboardInterrupt, EOFError):
+            return None
+        finally:
+            if self._cancel is not None:
+                self._cancel.arm()
+
+    async def _confirm(self, question: str) -> bool:
+        if self.picker is None:
+            answer = self._ask(f"{question} [y/N]")
+            return bool(answer and answer.strip().lower() in {"y", "yes"})
+        if self._cancel is not None:
+            self._cancel.disarm()
+        try:
+            return await self.picker.confirm(question, "yes", "no", ("y",))
+        except KeyboardInterrupt:
+            return False
+        finally:
+            if self._cancel is not None:
+                self._cancel.arm()
+
+    async def _ask_options(self, label: str, options: list[str], active: str = "") -> str | None:
+        ask = getattr(self.picker, "ask_options", None)
+        if ask is not None:
+            answer: str | None = (
+                await ask(label, options, active) if active else await ask(label, options)
+            )
+            return answer
+        if not self.renderer.console.is_terminal:
+            return self._ask(label)
+        try:
+            from prompt_toolkit import PromptSession
+            from prompt_toolkit.completion import WordCompleter
+            from prompt_toolkit.styles import Style
+        except ImportError:
+            return self._ask(label)
+        if self._cancel is not None:
+            self._cancel.disarm()
+        theme = self.renderer.theme
+        session: PromptSession[str] = PromptSession(
+            completer=WordCompleter(options, ignore_case=True, sentence=True),
+            complete_while_typing=True,
+            style=Style.from_dict(
+                {
+                    "prompt": f"bold fg:{theme.copper}",
+                    "completion-menu": f"bg:{theme.surface}",
+                    "completion-menu.completion": f"fg:{theme.text} bg:{theme.surface}",
+                    "completion-menu.completion.current": f"fg:{theme.surface} bg:{theme.copper}",
+                    "completion-menu.meta.completion": f"fg:{theme.dim} bg:{theme.surface}",
+                }
+            ),
+        )
+        try:
+            return await session.prompt_async([("class:prompt", f"{label} ")])
+        except (KeyboardInterrupt, EOFError):
+            return None
+        finally:
+            if self._cancel is not None:
+                self._cancel.arm()
+
+    def _switch(self, text: str) -> bool:
+        try:
+            ref = ModelRef.parse(text)
+        except ValueError as exc:
+            self.renderer.error(str(exc))
+            return False
+        if ref.provider not in self.config.providers:
+            known = ", ".join(sorted(self.config.providers)) or "none"
+            self.renderer.error(f"Unknown provider: {ref.provider}", f"Configured: {known}")
+            return False
+        self.config = replace(self.config, agent=replace(self.config.agent, model=str(ref)))
+        self.renderer.system(f"Active model: {ref} (this session)")
+        if describe(self.config).credential == "no key":
+            self.renderer.warning("No API key found for this provider.")
+        return True
+
+    async def _discover(self, provider: str, force: bool = False) -> Discovery:
+        if not force and provider in self._catalog:
+            return self._catalog[provider]
+        spec = self.config.providers[provider]
+        if self.config.network.local_only and not is_local_url(spec.base_url):
+            return Discovery(provider, error="blocked by network.local_only")
+        self.renderer.system(f"Fetching models from {provider}... (Ctrl+C cancels)")
+        result = await discover(spec, resolve_api_key(spec))
+        if not result.error:
+            self._catalog[provider] = result
+        return result
+
+    async def _model(self, argument: str) -> None:
+        if "/" in argument:
+            self._switch(argument)
+            return
+        if argument:
+            name = argument.lower()
+            if name not in self.config.providers:
+                self.renderer.error(f"Unknown provider: {argument}")
+                return
+            await self._model_menu(name)
+            return
+        await self._provider_menu()
+
+    async def _provider_menu(self) -> None:
+        while True:
+            rows = provider_rows(self.config)
+            if getattr(self.renderer, "rich_pages", True):
+                self.renderer.provider_page(rows, self.config.agent.model)
+            active = active_ref(self.config)
+            active_provider = active.provider if active is not None else ""
+            answer = await self._ask_options(
+                "provider>", [row.name for row in rows], active_provider
+            )
+            if answer is None:
+                return
+            choice = parse_choice(answer, len(rows))
+            if choice.kind == "quit":
+                return
+            if choice.kind == "select":
+                row = rows[choice.index]
+            else:
+                found = [item for item in rows if item.name == choice.text.lower()]
+                if not found:
+                    self.renderer.error(f"Unknown provider or number: {choice.text}")
+                    continue
+                row = found[0]
+            if not row.ready:
+                reason = f"set {row.env} and restart Eurus" if row.env else row.note
+                self.renderer.warning(f"{row.name} is unavailable: {reason}.")
+                continue
+            if await self._model_menu(row.name) != "back":
+                return
+
+    async def _model_menu(self, provider: str) -> str:
+        discovery = await self._discover(provider)
+        query = ""
+        page = 0
+        rich = getattr(self.renderer, "rich_pages", True)
+        while True:
+            ref = active_ref(self.config)
+            active_id = ref.model if ref is not None and ref.provider == provider else ""
+            models = filter_models(with_active_first(discovery.models, active_id), query)
+            size = page_size(self.renderer.console.height)
+            page, pages, start, end = page_bounds(len(models), page, size)
+            visible = models[start:end] if rich else models
+            if rich:
+                self.renderer.model_page(
+                    provider,
+                    visible,
+                    start,
+                    page,
+                    pages,
+                    len(models),
+                    active_id,
+                    query,
+                    discovery.error,
+                )
+            elif discovery.error:
+                self.renderer.warning(discovery.error)
+            answer = await self._ask_options("model>", [info.id for info in models], active_id)
+            if answer is None:
+                return "quit"
+            choice = parse_choice(answer, len(visible))
+            if choice.kind == "quit":
+                return "quit"
+            if choice.kind == "back":
+                return "back"
+            if choice.kind == "next":
+                page += 1
+            elif choice.kind == "prev":
+                page -= 1
+            elif choice.kind == "refresh":
+                discovery = await self._discover(provider, force=True)
+                page = 0
+            elif choice.kind == "select":
+                if self._switch(f"{provider}/{visible[choice.index].id}"):
+                    return "chosen"
+            elif choice.text.startswith("="):
+                if self._switch(f"{provider}/{choice.text[1:].strip()}"):
+                    return "chosen"
+            elif any(info.id.lower() == choice.text.lower() for info in models):
+                selected = next(info for info in models if info.id.lower() == choice.text.lower())
+                if self._switch(f"{provider}/{selected.id}"):
+                    return "chosen"
+            elif choice.text.isdigit():
+                self.renderer.warning("Number is not on this page.")
+            else:
+                query = choice.text.lstrip("/")
+                page = 0
+
+    def _unicode(self) -> bool:
+        return appearance.unicode_capabilities(self)
+
+    def _paint(self, theme: Theme) -> None:
+        appearance.paint(self, theme)
+
+    def paint_theme(self, theme: Theme) -> None:
+        self._paint(theme)
+
+    def preview_theme(self, name: str) -> None:
+        appearance.preview_theme(self, name)
+
+    async def _theme(self, argument: str) -> None:
+        await appearance.theme_command(self, argument)
+
+    def _resolve_theme(self, name: str) -> Theme | None:
+        return appearance.resolve_theme(self, name)
+
+    def _glyphs(self, argument: str) -> None:
+        appearance.glyphs_command(self, argument)
+
+    async def _font(self, argument: str) -> None:
+        await appearance.font_command(self, argument)
+
+    def _undo(self, argument: str) -> None:
+        appearance.undo_command(self, argument)
+
+    async def _theme_menu(self) -> None:
+        await appearance.theme_menu(self)
+
+    def _theme_switch(self, name: str) -> None:
+        appearance.theme_switch(self, name)
+
+    def _theme_preview(self, name: str) -> None:
+        appearance.theme_preview(self, name)
+
+    def _theme_new(self, argument: str) -> None:
+        appearance.theme_new(self, argument)
+
+    def _theme_termux(self, name: str) -> None:
+        appearance.theme_termux(self, name)
+
+    async def _font_install(self, source: str) -> None:
+        await appearance.font_install(self, source)
+
+    def _models(self, _: str) -> None:
+        models = list(
+            dict.fromkeys(
+                model for model in (self.config.agent.model, *self.config.agent.fallback) if model
+            )
+        )
+        rows = [("-", model) for model in models]
+        self.renderer.table("Configured models", rows or [("-", "none")])
+
+    def _provider(self, _: str) -> None:
+        rows = [
+            (name, credential_note(describe(self.config, f"{name}/x").credential))
+            for name in sorted(self.config.providers)
+        ]
+        self.renderer.table("Providers", rows or [("-", "none configured")])
+
+    def _skills(self, _: str) -> None:
+        active = set(self.config.agent.skills)
+        rows = [
+            (skill.name, f"{self._skill_state(skill.name, active)} | {skill.description}")
+            for skill in list_skills(self.workspace)
+        ]
+        self.renderer.table("Skills", rows or [("-", "none found")])
+
+    @staticmethod
+    def _skill_state(name: str, active: set[str]) -> str:
+        return "active" if name in active else "available"
+
+    async def _memory(self, argument: str) -> None:
+        action, _, rest = argument.partition(" ")
+        action = action.lower() or "list"
+        if action == "list":
+            rows = self.memory.store.list_memories(limit=50)
+            entries = [
+                (str(row["id"]), f"[{row.get('memory_type', 'fact')}] {row['content'][:100]}")
+                for row in rows
+            ]
+            self.renderer.table("Saved memories", entries or [("-", "No saved memories")])
+        elif action == "search":
+            rows = self.memory.recall(rest)
+            entries = [
+                (str(row["id"]), f"[{row.get('memory_type', 'fact')}] {row['content'][:100]}")
+                for row in rows
+            ]
+            self.renderer.table("Memory search", entries or [("-", "No matches")])
+        elif action == "add":
+            memory_type, _, content = rest.partition(" ")
+            valid_types = {"profile", "preference", "project_fact", "lesson", "episode", "fact"}
+            if memory_type not in valid_types or not content.strip():
+                self.renderer.system("Usage: /memory add <type> <content>")
+                return
+            if await self._confirm("Save this memory?"):
+                memory_id = self.memory.store.add_memory(
+                    content,
+                    category="user",
+                    memory_type=memory_type,
+                    source="user",
+                    confidence=1.0,
+                )
+                self.renderer.system(f"Memory saved: #{memory_id}")
+            else:
+                self.renderer.system("Memory not saved.")
+        elif action in {"delete", "edit"}:
+            identifier, _, content = rest.partition(" ")
+            if not identifier.isdigit():
+                suffix = " <new content>" if action == "edit" else ""
+                self.renderer.system(f"Usage: /memory {action} <id>{suffix}")
+                return
+            memory_id = int(identifier)
+            if action == "delete":
+                if await self._confirm(f"Delete memory #{memory_id}?"):
+                    message = (
+                        "Memory deleted." if self.memory.forget(memory_id) else "Memory not found."
+                    )
+                    self.renderer.system(message)
+                else:
+                    self.renderer.system("Memory kept.")
+            elif not content.strip():
+                self.renderer.system("Usage: /memory edit <id> <new content>")
+            else:
+                if await self._confirm(f"Update memory #{memory_id}?"):
+                    message = (
+                        "Memory updated."
+                        if self.memory.update(memory_id, content)
+                        else "Memory not found."
+                    )
+                    self.renderer.system(message)
+                else:
+                    self.renderer.system("Memory unchanged.")
+        else:
+            self.renderer.system(
+                "Usage: /memory [list|search <query>|add <type> <content>|"
+                "edit <id> <content>|delete <id>]"
+            )
+
+    def _sessions(self, _: str) -> None:
+        rows = self.session_store.list_sessions()
+        entries = [
+            (str(row["id"]), f"{row['title']} ({row['message_count']} messages)")
+            for row in rows[:20]
+        ]
+        self.renderer.table("Saved sessions", entries or [("-", "No saved sessions")])
+
+    def _resume(self, argument: str) -> None:
+        sessions = self.session_store.list_sessions()
+        if not sessions:
+            self.renderer.system("No saved sessions.")
+            return
+        target = argument.strip()
+        selected: dict[str, Any] | None
+        if not target or target == "latest":
+            selected = sessions[0]
+        else:
+            selected = next((item for item in sessions if item["id"] == target), None)
+        if selected is None:
+            self.renderer.error("Session not found. Use /sessions to list saved sessions.")
+            return
+        loaded = self.session_store.load_messages(str(selected["id"]))
+        self.history = loaded
+        self.session_id = str(selected["id"])
+        self.usage = Usage()
+        self.retry_prompt = ""
+        self._cached_agent = None
+        self.renderer.system(f"Resumed: {selected['title']} ({len(loaded)} messages)")
+
+    def _tools(self, _: str) -> None:
+        rows = []
+        for name in self.registry.names():
+            tool = self.registry.get(name)
+            if tool is not None:
+                rows.append((name, tool.description))
+        self.renderer.table("Tools", rows)
+
+    def _mcp_status(self, _: str) -> None:
+        rows = []
+        for item in self.mcp.status():
+            state = str(item["state"])
+            if item["error"]:
+                state = f"{state} ({item['error_code'] or 'error'})"
+            rows.append((str(item["name"]), f"{state}, {item['tools']} tool(s)"))
+        self.renderer.table("MCP servers", rows)
+        google = self.mcp_runtime.google
+        if google is None:
+            self.renderer.system("Google Workspace: unavailable (see startup warnings).")
+            return
+        diagnostics = google.diagnostics()
+        active = diagnostics["active_account"]
+        if diagnostics["enabled_services"]:
+            rows = []
+            for row in google.service_status():
+                state = str(row["state"])
+                if row["error"]:
+                    state = f"{state} ({row['error'][:60]})"
+                rows.append(
+                    (
+                        str(row["service"]),
+                        f"{'enabled' if row['enabled'] else 'disabled'}, "
+                        f"{state}, {row['tools']} tool(s)",
+                    )
+                )
+            self.renderer.table("Google Workspace", rows)
+            if diagnostics["login_required"]:
+                self.renderer.warning(
+                    "Google services enabled but no account logged in: run "
+                    "`eurus auth google login`."
+                )
+            missing = diagnostics.get("missing_scopes") or []
+            if missing:
+                self.renderer.warning(
+                    f"{len(missing)} scope(s) missing from the stored token; "
+                    "re-run `eurus auth google login`."
+                )
+        else:
+            self.renderer.system(
+                "Google Workspace: no services enabled (eurus mcp google enable <service>)."
+            )
+        if active:
+            self.renderer.system(f"Active Google account: {active}")
+
+    def _browser(self, argument: str) -> None:
+        from eurus.browser.integration import registry_manager
+
+        action = argument.strip().lower() or "status"
+        manager = registry_manager(self.registry)
+        if not self.config.browser.enabled:
+            self.renderer.warning(
+                "Browser automation is disabled; enable it with [browser] enabled = true."
+            )
+            return
+        if manager is None:
+            self.renderer.system("Browser starts lazily with the first browser tool call.")
+            return
+        if action == "stop":
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._stop_browser())
+            return
+        status = manager.status()
+        backend = str(status.get("backend", "unknown"))
+        connected = "connected" if status.get("connected") else "not started"
+        ownership = "owned process" if status.get("owns_process") else "external browser"
+        sessions = status.get("sessions", {})
+        rows = [
+            ("backend", backend),
+            ("connection", connected),
+            ("process", ownership),
+            ("profile", str(status.get("profile_dir") or "default (~/.eurus/browser/profile)")),
+            ("downloads", str(status.get("download_dir", ""))),
+        ]
+        for key, item in sessions.items():
+            rows.append(
+                (
+                    f"run {key}",
+                    f"{item.get('tabs', 0)} tab(s), idle {item.get('idle_seconds', 0):g}s",
+                )
+            )
+        if not sessions:
+            rows.append(("runs", "no active browser runs"))
+        self.renderer.table("Browser", rows)
+
+    async def _stop_browser(self) -> None:
+        from eurus.browser.integration import registry_manager
+
+        manager = registry_manager(self.registry)
+        if manager is None:
+            return
+        try:
+            await manager.stop()
+            self.renderer.system("Browser stopped; it restarts with the next browser tool call.")
+        except Exception as exc:
+            self.renderer.error(f"browser stop failed: {exc}")
+
+    def _grants(self, argument: str) -> None:
+        action, _, rest = argument.partition(" ")
+        action = action.lower() or "list"
+        if action == "list":
+            grants = self.session_approver.active_grants()
+            rows: list[tuple[str, str]] = [
+                (
+                    str(grant["fingerprint"]),
+                    f"{grant['tool']} (expires in {grant['expires_in']:.0f}s)",
+                )
+                for grant in grants
+            ]
+            self.renderer.table(
+                "Session approval grants",
+                rows or [("-", "No active grants; every approval is asked fresh")],
+            )
+        elif action == "revoke":
+            fingerprint = rest.strip()
+            if not fingerprint:
+                self.renderer.error("Usage: /grants revoke <fingerprint>", "")
+            elif self.session_approver.revoke(fingerprint):
+                self.renderer.system(f"Revoked grant {fingerprint}.")
+            else:
+                matching = [
+                    grant["fingerprint"]
+                    for grant in self.session_approver.active_grants()
+                    if str(grant["fingerprint"]).startswith(fingerprint)
+                ]
+                if len(matching) == 1 and self.session_approver.revoke(str(matching[0])):
+                    self.renderer.system(f"Revoked grant {matching[0]}.")
+                else:
+                    self.renderer.error(
+                        f"No unique grant matches {fingerprint!r}.",
+                        "Use /grants to list active fingerprints.",
+                    )
+        elif action in {"revoke-all", "clear"}:
+            count = self.session_approver.revoke_all()
+            self.renderer.system(f"Revoked {count} session grant(s).")
+        else:
+            self.renderer.error(
+                "Usage: /grants [revoke <fingerprint> | revoke-all]",
+                "Without arguments, lists active grants.",
+            )
+
+    def _status(self, _: str) -> None:
+        info = describe(self.config)
+        turns = sum(message.role == "user" for message in self.history)
+        rows = [
+            ("state", self.state.value),
+            ("model", info.model),
+            ("credential", credential_note(info.credential)),
+            ("workspace", str(self.workspace)),
+            ("turns in context", str(turns)),
+            ("tools", str(len(self.registry.names()))),
+            ("shell", shell_label(self.config)),
+        ]
+        if self.usage.total_tokens:
+            rows.append(
+                ("tokens", f"in {self.usage.input_tokens} / out {self.usage.output_tokens}")
+            )
+        self.renderer.table("Status", rows)
+
+    async def _schedule(self, argument: str) -> None:
+        from eurus.schedule_tools import schedule_tool
+
+        tool = schedule_tool(_schedule_store())
+        parts = argument.split(maxsplit=2)
+        action = parts[1] if len(parts) > 1 else "list"
+        payload: dict[str, Any] = {"action": action}
+        if action in ("pause", "resume", "run", "remove") and len(parts) > 2:
+            payload["schedule_id"] = parts[2].strip()
+        elif action == "create" and len(parts) > 2:
+            payload.update(
+                {"objective": parts[2].strip(), "kind": "interval", "interval_seconds": 3600}
+            )
+        try:
+            outcome = await tool.handler(payload, self._tool_context())
+            result = str(outcome)
+        except Exception as exc:
+            result = f"Schedule command failed: {type(exc).__name__}: {exc}"
+        self.renderer.console.print(result)
+
+    def _jobs(self, _: str) -> None:
+        from eurus.owner import OWNER_ID
+        from eurus.storage.database import Database
+        from eurus.storage.jobs import JobStore
+
+        jobs = JobStore(Database(paths.database_path())).list_jobs(owner_id=OWNER_ID, limit=15)
+        if not jobs:
+            self.renderer.console.print("No jobs yet.")
+            return
+        for job in jobs:
+            self.renderer.console.print(
+                f"{job.job_id[:8]} · {job.status} · delivery={job.delivery_status or '-'} · "
+                f"{job.objective[:70]}"
+            )
+
+    def _autonomy_cmd(self, argument: str) -> None:
+        parts = argument.split()
+        if (
+            len(parts) == 3
+            and parts[1]
+            in (
+                "goals",
+                "workflows",
+                "events",
+                "specialists",
+                "learning",
+            )
+            and self._autonomy is not None
+        ):
+            self._autonomy.set_subsystem(parts[1], parts[2].lower() in ("on", "true", "1"))
+        status = self.autonomy_status()
+        mode = status.get("mode", "stopped")
+        self.renderer.console.print(f"Autonomy runtime: {mode}")
+        for name, value in (status.get("subsystems") or {}).items():
+            self.renderer.console.print(f"  {name}: {'on' if value else 'off'}")
+        channels = status.get("channels") or []
+        if channels:
+            self.renderer.console.print(f"Delivery channels: {', '.join(channels)}")
+        if mode == "client":
+            self.renderer.console.print(
+                "Client mode: another process runs the workers; showing shared status and inbox."
+            )
+
+    def _tool_context(self) -> Any:
+        from eurus.tools.base import ToolContext
+
+        return ToolContext(workspace=self.workspace, run_id="tui-command", owner_id="eurus")
+
+    def _config(self, _: str) -> None:
+        self.renderer.table("Config", config_rows(self.config))
+
+    @property
+    def streaming(self) -> bool:
+        return self._view is not None
+
+    def set_pref(self, key: str, value: bool) -> None:
+        if key not in {"sidebar", "stream_preview", "markdown"}:
+            return
+        setattr(self.prefs, key, value)
+        view_prefs.save(self.prefs)
+        self.renderer.markdown_enabled = self.prefs.markdown
+        self.renderer.stream_preview = self.prefs.stream_preview
+
+    def _settings_rows(self) -> list[tuple[str, str]]:
+        theme_name = themes.active_name().lower()
+        return [
+            ("theme", f"{theme_name}  ({themes.describe_theme(theme_name)})"),
+            ("glyphs", themes.glyph_choice() or "auto"),
+            ("stream preview", "on" if self.prefs.stream_preview else "off"),
+            ("markdown", "on" if self.prefs.markdown else "off"),
+            ("sidebar", "on" if self.prefs.sidebar else "off"),
+        ]
+
+    def _settings(self, _: str) -> None:
+        opener = getattr(self.picker, "open_settings", None)
+        if opener is not None:
+            opener()
+            return
+        self.renderer.table("Settings", self._settings_rows())
+        self.renderer.system(
+            "Change with /theme, /glyphs, or the fullscreen settings dialog (Ctrl+O)."
+        )
+
+    def _workspace(self, _: str) -> None:
+        info = describe(self.config)
+        rows = [
+            ("workspace", str(self.workspace)),
+            ("configured", self.config.permissions.workspace),
+            ("model", info.model or "not configured"),
+        ]
+        self.renderer.table("Workspace", rows)
+        self.renderer.system(
+            "Set permissions.workspace in eurus.toml or EURUS_WORKSPACE, then restart Eurus."
+        )
+
+    def _compact(self, _: str) -> None:
+        turns = [index for index, message in enumerate(self.history) if message.role == "user"]
+        if len(turns) > 1:
+            self.history = self.history[turns[-1] :]
+        self._cached_agent = None
+        count = len(self.history)
+        self.renderer.system(f"Context compacted to the latest turn ({count} messages).")
+
+    def _retry(self, _: str) -> None:
+        if not self.retry_prompt:
+            self.renderer.system("Nothing to retry.")
+
+    def _clear(self, _: str) -> None:
+        self.history.clear()
+        self.session_id = str(uuid.uuid4())
+        self.usage = Usage()
+        self.retry_prompt = ""
+        self._cached_agent = None
+        self.renderer.clear()
+        self.renderer.startup(self.config)
+        self.renderer.system("Conversation cleared; project files unchanged.")
+
+    def _exit(self, _: str) -> None:
+        self.running = False
+        self.renderer.system("Goodbye.")
+
+    async def _command(self, text: str) -> str:
+        name, _, argument = text.partition(" ")
+        matches = resolve(name)
+        if len(matches) == 1:
+            command = matches[0].name
+            if command == "/retry" and self.retry_prompt:
+                return self.retry_prompt
+            try:
+                outcome = self._handlers[command](argument.strip())
+                if inspect.isawaitable(outcome):
+                    await outcome
+            except Exception as exc:
+                log.exception("Command %s failed", command)
+                self.renderer.error(f"{command} failed: {exc}", "The session is still running.")
+        elif matches:
+            self.renderer.palette(matches)
+        else:
+            close = ", ".join(command.name for command in suggest(name))
+            hint = f"Did you mean: {close}" if close else "Use /help to see available commands."
+            self.renderer.error(f"Unknown command: {name}", hint)
+        return ""
+
+    def _set_state(self, state: AgentState) -> None:
+        self.state = state
+        if self._view is not None:
+            self._view.state = state
+
+    async def run_cancellable(self, prompt: str) -> None:
+        task = asyncio.create_task(self.submit(prompt))
+        self._cancel = SigintCancel(task)
+        self._cancel.arm()
+        try:
+            await task
+        except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():
+                raise
+        finally:
+            self._cancel.disarm()
+            self._cancel = None
+
+    async def submit(self, prompt: str) -> None:
+        prompt = prompt.strip()
+        if not prompt:
+            self.renderer.status("Input is empty; enter a task or /help.")
+            return
+        if prompt.startswith("/"):
+            prompt = await self._command(prompt)
+            if not prompt:
+                return
+        if not self.config.agent.model:
+            self.renderer.error(
+                "No model configured.",
+                "Run `eurus config init` and set [agent].model, or use /model provider/name.",
+            )
+            return
+        if self._is_explicit_correction(prompt):
+            self.session_store.record_event("correction_proposed", session_id=self.session_id)
+            accepted = await self._confirm(
+                "This sounds like a lasting preference. Save it to memory?"
+            )
+            self.session_store.record_event(
+                "correction_accepted" if accepted else "correction_rejected",
+                session_id=self.session_id,
+            )
+            if accepted:
+                try:
+                    memory_id = self.memory.store.add_memory(
+                        prompt,
+                        category="user",
+                        memory_type="preference",
+                        source="explicit_correction",
+                        confidence=0.8,
+                    )
+                    self.renderer.system(f"Preference saved: #{memory_id}")
+                except ValueError as exc:
+                    self.renderer.warning(str(exc))
+        await self._turn(prompt)
+
+    @staticmethod
+    def _is_explicit_correction(prompt: str) -> bool:
+        patterns = (
+            r"\b(jangan|hindari|tidak boleh|selalu|mulai sekarang|ke depannya|"
+            r"saya lebih suka|saya maunya)\b",
+            r"\b(don't|do not|never|always|from now on|going forward|i prefer|please avoid)\b",
+        )
+        return any(re.search(pattern, prompt, re.IGNORECASE) for pattern in patterns)
+
+    def _flush(self, view: StreamView, stats: TurnStats) -> None:
+        text = view.take()
+        if text.strip():
+            self.renderer.assistant(text, label=not stats.spoke)
+            stats.spoke = True
+
+    def _consume(self, event: AgentEvent, view: StreamView, stats: TurnStats) -> None:
+        if event.kind == "step":
+            hooks = self._hooks
+            if hooks is not None and self._step_counter is not None:
+                hooks.agent_step(
+                    run_id=self._run_id or "tui",
+                    gateway="tui",
+                    step=self._step_counter.next(),
+                    detail=str(getattr(event, "detail", "") or ""),
+                )
+            self._set_state(AgentState.THINKING)
+        elif event.kind == "text":
+            view.feed(event.text)
+        elif event.kind == "text_reset":
+            view.reset()
+        elif event.kind == "tool_call":
+            self._flush(view, stats)
+            stats.tool_calls += 1
+            stats.pending += 1
+            self._set_state(AgentState.RUNNING)
+            self.renderer.activity(event)
+        elif event.kind == "tool_result":
+            stats.pending = max(stats.pending - 1, 0)
+            self.renderer.activity(event)
+            self._set_state(AgentState.RUNNING if stats.pending else AgentState.THINKING)
+        elif event.kind == "done":
+            self._flush(view, stats)
+            if event.usage is not None:
+                stats.usage = event.usage
+            self.renderer.activity(event)
+        else:
+            self.renderer.activity(event)
+
+    def _runtime_for_turn(self) -> AgentRuntime:
+        loop = asyncio.get_running_loop()
+        if self._runtime is None or self._runtime_loop is not loop:
+            self._runtime = AgentRuntime(
+                self._reject_cached_agent,
+                self.session_store,
+                close_timeout=5.0,
+                engine_factory=self._engine_for_agent,
+                require_engine=True,
+            )
+            self._runtime_loop = loop
+        return self._runtime
+
+    def _runtime_signature(self) -> str:
+        return repr(
+            (
+                self.config.agent,
+                self.config.network,
+                self.config.learning,
+                self.config.memory,
+                self.config.sandbox,
+                self.config.tools,
+                self.config.auxiliary,
+                self.config.verification,
+                self.config.planning,
+                self.config.permissions,
+                self.config.browser,
+                self.config.pricing.updated_at,
+                tuple(self.config.providers),
+            )
+        )
+
+    def _invalidate_agent(self) -> None:
+        self._cached_agent = None
+
+    def _background_event(self, event: AgentEvent) -> None:
+        self.renderer.activity(event)
+
+    async def _prepare_runtime(self) -> tuple[Router, Agent]:
+        signature = self._runtime_signature()
+        if self._cached_router is not None and signature != self._cached_signature:
+            stale_router, self._cached_router = self._cached_router, None
+            self._cached_agent = None
+            self._cached_pricing = None
+            await stale_router.aclose()
+        agent = self._cached_agent
+        if agent is None:
+            with span("tui.prepare_runtime"):
+                router = self._cached_router
+                if router is None:
+                    with span("build_router"):
+                        router = await asyncio.to_thread(build_router, self.config)
+                    self._cached_router = router
+                agent = await asyncio.to_thread(
+                    build_agent,
+                    self.config,
+                    router,
+                    registry=self.registry,
+                    approver=self.session_approver,
+                    lessons=True,
+                    learn=True,
+                    learn_background=True,
+                    skill_learning=self.config.learning.skills,
+                    background_event_sink=self._background_event,
+                )
+                agent.history.extend(self.history)
+                saved_summary = self.session_store.load_session_summary(self.session_id)
+                if saved_summary and agent.history:
+                    agent.history[0] = replace(
+                        agent.history[0],
+                        content=(
+                            f"{agent.history[0].content}\n\n"
+                            "Saved summary of this session "
+                            "(context only; verify details in history):\n"
+                            f"{saved_summary}"
+                        ),
+                    )
+            self._cached_agent = agent
+            self._cached_signature = signature
+        else:
+            usage = getattr(agent, "usage", None)
+            if usage is not None:
+                agent.usage = Usage()
+        if self._cached_router is None:
+            self._cached_router = await asyncio.to_thread(build_router, self.config)
+        return self._cached_router, agent
+
+    def _engine_for_agent(self, agent: Agent) -> Any:
+        from eurus.runtime.engine import AgentEngine
+        from eurus.runtime.pricing import build_pricing_catalog
+        from eurus.storage.events import EventStore
+        from eurus.storage.runs import RunStore
+        from eurus.storage.tool_attempts import ToolAttemptStore
+
+        if self._engine_database is None:
+            paths.home_manager().ensure_layout()
+            self._engine_database = Database(paths.database_path())
+        if self._engine_stores is None:
+            self._engine_stores = (
+                RunStore(self._engine_database),
+                EventStore(self._engine_database),
+                ToolAttemptStore(self._engine_database),
+            )
+        if self._cached_checkpoint_store is None:
+            self._cached_checkpoint_store = CheckpointStore()
+        if self._cached_pricing is None:
+            self._cached_pricing = build_pricing_catalog(
+                {
+                    "updated_at": self.config.pricing.updated_at,
+                    "models": self.config.pricing.models,
+                },
+                home=paths.home_dir(),
+            )
+        run_store, event_store, attempt_store = self._engine_stores
+        return AgentEngine(
+            agent,
+            run_store=run_store,
+            event_store=event_store,
+            attempt_store=attempt_store,
+            checkpoint_store=self._cached_checkpoint_store,
+            pricing=self._cached_pricing,
+        )
+
+    @staticmethod
+    def _reject_cached_agent(session_id: str) -> Agent:
+        raise RuntimeError("the interactive session supplies its own agent for every turn")
+
+    async def start_autonomy(self) -> dict[str, Any]:
+        from eurus.autonomy_service import AutonomyService
+
+        if self._autonomy is not None:
+            current: dict[str, Any] = self._autonomy.status()
+            return current
+        service = AutonomyService(self.config)
+        started: dict[str, Any] = await service.start()
+        self._autonomy = service
+        self.renderer.system(
+            f"Autonomy runtime: {started['mode']} "
+            f"(workers={started['config']['workers']}, poll={started['config']['poll_seconds']:g}s)"
+        )
+        return started
+
+    def autonomy_status(self) -> dict[str, Any]:
+        if self._autonomy is None:
+            return {"mode": "stopped"}
+        current: dict[str, Any] = self._autonomy.status()
+        return current
+
+    async def close(self) -> None:
+        from eurus.browser.integration import close_registry_browser
+
+        autonomy, self._autonomy = self._autonomy, None
+        if autonomy is not None:
+            with contextlib.suppress(Exception):
+                await autonomy.stop()
+        runtime, self._runtime = self._runtime, None
+        try:
+            if runtime is not None:
+                await runtime.close()
+        finally:
+            agent, self._cached_agent = self._cached_agent, None
+            if agent is not None:
+                drain = getattr(agent, "drain_background", None)
+                if callable(drain):
+                    try:
+                        await drain(timeout=5.0)
+                    except Exception:
+                        log.debug("background learning drain failed", exc_info=True)
+            router, self._cached_router = self._cached_router, None
+            try:
+                if router is not None:
+                    await router.aclose()
+            finally:
+                try:
+                    await close_registry_browser(self.registry)
+                except Exception:
+                    log.debug("browser close failed", exc_info=True)
+                database, self._engine_database = self._engine_database, None
+                self._engine_stores = None
+                self._cached_pricing = None
+                if database is not None:
+                    database.close()
+                await self.mcp.close()
+
+    async def _turn(self, prompt: str) -> None:
+        from eurus.autonomy_hooks import HookPublisher, StepCounter
+        from eurus.owner import OWNER_ID
+        from eurus.schedule_tools import reset_schedule_context, set_schedule_context
+
+        started = time.monotonic()
+        router = None
+        stats = TurnStats()
+        self.renderer.user(prompt)
+        self._set_state(AgentState.THINKING)
+        schedule_token = set_schedule_context(OWNER_ID, "tui", self.session_id)
+        if self._hooks is None:
+            self._hooks = HookPublisher.for_home()
+            self._step_counter = StepCounter()
+        hooks = self._hooks
+        run_id = f"tui-{self.session_id[:12]}-{int(started)}"
+        self._run_id = run_id
+        end_status = "completed"
+        hooks.agent_start(run_id=run_id, gateway="tui", session_id=self.session_id)
+        try:
+            with self.renderer.generating() as view:
+                self._view = view
+                self.renderer.status("Preparing agent and connecting tools…")
+                await asyncio.sleep(0)
+                try:
+                    with span("tui.turn"):
+                        router, agent = await self._prepare_runtime()
+                        await self.mcp_runtime.ensure_connected()
+                        self.mcp_runtime.register_tools(self.registry)
+                        async for event in self._runtime_for_turn().run_agent(
+                            self.session_id, agent, prompt, persist=False
+                        ):
+                            if event.kind == "text" and stats.spoke is False and not stats.saw_text:
+                                stats.saw_text = True
+                                record("tui.ttft", time.monotonic() - started)
+                            self._consume(event, view, stats)
+                        self._flush(view, stats)
+                        self.history = agent.history[1:]
+                        self.session_store.save_messages(self.session_id, agent.history)
+                        self.usage += stats.usage
+                        self.retry_prompt = ""
+                        self._set_state(AgentState.IDLE)
+                        self.renderer.turn_summary(
+                            time.monotonic() - started, stats.tool_calls, stats.usage
+                        )
+                finally:
+                    self._flush(view, stats)
+                    self._view = None
+        except asyncio.CancelledError:
+            end_status = "cancelled"
+            self.retry_prompt = prompt
+            self._set_state(AgentState.IDLE)
+            self.renderer.cancelled()
+            raise
+        except (EurusError, ValueError, KeyError) as exc:
+            end_status = "failed"
+            self._set_state(AgentState.ERROR)
+            self.renderer.error(str(exc), "You can edit the request and try again.")
+        except Exception as exc:
+            end_status = "failed"
+            log.debug("unexpected failure", exc_info=True)
+            self._set_state(AgentState.ERROR)
+            self.renderer.error(f"Unexpected error: {type(exc).__name__}: {exc}")
+        finally:
+            reset_schedule_context(schedule_token)
+            self._view = None
+            record("tui.turn_total", time.monotonic() - started)
+            self._dump_timing()
+            hooks.agent_end(run_id=run_id, gateway="tui", status=end_status)
+            self._run_id = None
+
+    def _dump_timing(self) -> None:
+        dump_path = os.environ.get("EURUS_TIMING_DUMP", "").strip()
+        if not dump_path:
+            return
+        try:
+            instrumentation.dump(dump_path)
+        except OSError:
+            log.debug("timing dump failed", exc_info=True)
+
+    async def _approve(self, call: ToolCall, tool: Tool) -> bool:
+        request = approval_request(call, tool)
+        previous = self.state
+        self._set_state(AgentState.APPROVAL)
+        self.renderer.pause_live()
+        unisolated = call.name == "shell" and self.config.sandbox.backend == "host"
+        note = "Runs directly on this device; not isolated." if unisolated else ""
+        self.renderer.approval(request, call.arguments, note)
+        if self._cancel is not None:
+            self._cancel.disarm()
+        answer = ""
+        interrupted = False
+        try:
+            if self.picker is not None:
+                granted = await self.picker.confirm("Allow once?", "allow once", "deny", ("a", "y"))
+                answer = "a" if granted else ""
+            else:
+                answer = self.renderer.ask(self.renderer.approval_prompt())
+        except KeyboardInterrupt:
+            interrupted = True
+        except EOFError:
+            answer = ""
+        finally:
+            if self._cancel is not None:
+                self._cancel.arm()
+            self.renderer.resume_live()
+            self._set_state(previous)
+        allowed = not interrupted and answer.strip().lower() in ALLOW_ANSWERS
+        self.renderer.approval_result(allowed)
+        self.session_store.record_event(
+            "approval_accepted" if allowed else "approval_rejected",
+            session_id=self.session_id,
+            metadata={"tool": call.name, "mutating": tool.mutates},
+        )
+        if interrupted:
+            raise asyncio.CancelledError
+        return allowed
