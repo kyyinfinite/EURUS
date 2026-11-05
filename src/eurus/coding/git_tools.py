@@ -12,11 +12,15 @@ REVISION_PATTERN = re.compile(r"^[0-9a-fA-F]{7,40}$")
 GIT_TIMEOUT = 8.0
 
 
+def git_environment() -> dict[str, str]:
+    return git_child_env()
+
+
 async def _run_git(context: ToolContext, *args: str) -> str:
     root = context.workspace.resolve()
     if not root.is_dir() or not ((root / ".git").exists()):
         raise ToolError("workspace is not a Git repository")
-    env = git_child_env()
+    env = git_environment()
     try:
         process = await asyncio.create_subprocess_exec(
             "git",

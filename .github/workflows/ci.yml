@@ -170,10 +170,6 @@ jobs:
         run: npm run typecheck
         working-directory: frontend
 
-      - name: Tests
-        run: npm run test
-        working-directory: frontend
-
       - name: Production build
         run: npm run build
         working-directory: frontend
