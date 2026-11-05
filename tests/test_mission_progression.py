@@ -341,7 +341,9 @@ class TestMissionProgressionTick:
         assert tasks["ui"].attempt == 2
         assert report.dispatched
 
-    async def test_tick_isolates_per_mission_failures(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_tick_isolates_per_mission_failures(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         stack = Stack(tmp_path)
         good = _seed_mission(stack)
         broken = stack.supervisor.create_mission("Broken mission", owner_id=OWNER)
