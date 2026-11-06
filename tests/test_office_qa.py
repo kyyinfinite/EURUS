@@ -20,6 +20,7 @@ from eurus.office.qa.scoring import (
     merge_defects,
 )
 from eurus.office.qa.visual import _deterministic_defects, _page_metrics, vision_supported
+from eurus.office.renderers.base import detect_capabilities
 from eurus.office.renderers.word import render_document
 
 PIL = pytest.importorskip("PIL")
@@ -197,6 +198,10 @@ def test_merge_defects_deduplicates() -> None:
     assert len(merged) == 2
 
 
+@pytest.mark.skipif(
+    not detect_capabilities().pdf_to_images,
+    reason="LibreOffice (soffice) and pdftoppm are required to render document pages",
+)
 def test_visual_pipeline_renders_real_docx_pages(tmp_path: Path) -> None:
     import asyncio
 
