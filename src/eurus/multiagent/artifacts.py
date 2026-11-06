@@ -15,6 +15,8 @@ from eurus.storage.database import Database, DatabasePath
 MAX_ARTIFACT_BYTES = 10 * 1024 * 1024
 STANDALONE_MISSION_ID = "standalone"
 _MAX_METADATA_KEYS = 32
+_MAX_PAGE_LIMIT = 500
+_DEFAULT_PAGE_LIMIT = 50
 
 
 class ArtifactError(ValueError):
@@ -286,6 +288,53 @@ class ArtifactStore:
             ).fetchall()
         return [self._record(row) for row in rows]
 
+    def list_page(
+        self,
+        owner_id: str,
+        *,
+        limit: int = _DEFAULT_PAGE_LIMIT,
+        cursor: str | None = None,
+        include_expired: bool = False,
+    ) -> tuple[list[ArtifactRecord], str | None]:
+        if not owner_id.strip():
+            raise ArtifactError("owner_id is required")
+        bounded = max(1, min(int(limit), _MAX_PAGE_LIMIT))
+        expiry_clause = "" if include_expired else "AND (expires_at IS NULL OR expires_at > ?) "
+        params: list[Any] = [owner_id]
+        if not include_expired:
+            params.append(_time(_now()))
+        keyset_clause = ""
+        if cursor is not None:
+            anchor_created, anchor_id = _decode_cursor(cursor)
+            keyset_clause = "AND (created_at < ? OR (created_at = ? AND artifact_id < ?)) "
+            params.extend([_time(anchor_created), _time(anchor_created), anchor_id])
+        with self.database.connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM eurus_agent_artifacts "
+                f"WHERE owner_id=? {expiry_clause}{keyset_clause}"
+                "ORDER BY created_at DESC, artifact_id DESC LIMIT ?",
+                (*params, bounded + 1),
+            ).fetchall()
+        records = [self._record(row) for row in rows[:bounded]]
+        if len(rows) > bounded:
+            last = records[-1]
+            return records, _encode_cursor(last.created_at, last.artifact_id)
+        return records, None
+
+    def count_active(self, owner_id: str, *, include_expired: bool = False) -> int:
+        if not owner_id.strip():
+            raise ArtifactError("owner_id is required")
+        clause = "" if include_expired else "AND (expires_at IS NULL OR expires_at > ?)"
+        params: tuple[Any, ...] = (owner_id,)
+        if not include_expired:
+            params += (_time(_now()),)
+        with self.database.connection() as connection:
+            row = connection.execute(
+                f"SELECT COUNT(*) AS total FROM eurus_agent_artifacts WHERE owner_id=? {clause}",
+                params,
+            ).fetchone()
+        return int(row["total"]) if row is not None else 0
+
     def purge_expired(self, *, now: datetime | None = None) -> int:
         cutoff = _time(now or _now())
         with self.database.connection() as connection:
@@ -374,6 +423,20 @@ def _json_dict(value: str | None) -> dict[str, Any]:
     except (TypeError, ValueError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _encode_cursor(created_at: datetime, artifact_id: str) -> str:
+    return f"{_time(created_at)}|{artifact_id}"
+
+
+def _decode_cursor(cursor: str) -> tuple[datetime, str]:
+    parts = cursor.split("|")
+    if len(parts) != 2 or not parts[0].strip() or not parts[1].strip():
+        raise ArtifactError("malformed pagination cursor")
+    parsed = _parse(parts[0].strip())
+    if parsed is None:
+        raise ArtifactError("malformed pagination cursor")
+    return parsed, parts[1].strip()
 
 
 def _json_list(value: str | None) -> list[Any]:

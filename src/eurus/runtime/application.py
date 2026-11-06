@@ -6,6 +6,7 @@ import logging
 import time
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import suppress
 
 from eurus.agent.events import AgentEvent
 from eurus.agent.loop import Agent
@@ -244,12 +245,19 @@ class AgentRuntime:
                     {engine_task, get_task}, return_when=asyncio.FIRST_COMPLETED
                 )
                 if engine_task in done:
-                    get_task.cancel()
-                    await asyncio.gather(get_task, return_exceptions=True)
+                    retrieved: AgentEvent | None = None
+                    if get_task in done and not get_task.cancelled():
+                        with suppress(asyncio.CancelledError):
+                            retrieved = get_task.result()
+                    else:
+                        get_task.cancel()
+                        await asyncio.gather(get_task, return_exceptions=True)
                     while not queue.empty():
                         drained: AgentEvent | None = queue.get_nowait()
                         if drained is not None:
                             yield drained
+                    if retrieved is not None:
+                        yield retrieved
                     engine_task.result()
                     return
                 streamed: AgentEvent | None = get_task.result()

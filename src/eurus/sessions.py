@@ -785,6 +785,27 @@ class SessionStore:
             rows = connection.execute(sql, params).fetchall()
         return [dict(row) for row in rows]
 
+    def list_memories_in_scope(
+        self,
+        scope: str,
+        *,
+        category: str | None = None,
+        limit: int = 50,
+        include_untrusted: bool = False,
+    ) -> list[dict[str, Any]]:
+        sql = f"SELECT {_MEMORY_COLUMNS} FROM memories WHERE scope = ?"
+        params: list[Any] = [scope]
+        if not include_untrusted:
+            sql += " AND trust != 'untrusted'"
+        if category is not None:
+            sql += " AND category = ?"
+            params.append(category)
+        sql += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        with self._connection() as connection:
+            rows = connection.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
+
     def relevant_memories(
         self,
         terms: Sequence[str],

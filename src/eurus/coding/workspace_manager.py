@@ -32,8 +32,13 @@ class WorkspaceManager:
     def allocate(self, assignment_id: str, *, owner_id: str) -> WorkspaceAllocation:
         if not assignment_id.strip() or not owner_id.strip():
             raise WorktreeError("assignment_id and owner_id are required")
-        if assignment_id in self._allocations:
-            return self._allocations[assignment_id]
+        existing = self._allocations.get(assignment_id)
+        if existing is not None:
+            if existing.owner_id != owner_id:
+                raise WorktreeError(
+                    f"assignment {assignment_id} is already allocated to another owner"
+                )
+            return existing
         worktree = create_worktree(self.root, prefix=f"eurus-ws-{assignment_id[:8]}")
         allocation = WorkspaceAllocation(
             assignment_id=assignment_id, owner_id=owner_id, worktree=worktree

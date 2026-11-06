@@ -61,7 +61,21 @@ def test_workspace_manager_rejects_cross_owner_reuse(tmp_path: Path) -> None:
     (monkey_repo / ".git").mkdir()
     subprocess.run(["git", "init", "-q", str(monkey_repo)], check=True)
     subprocess.run(
-        ["git", "-C", str(monkey_repo), "commit", "--allow-empty", "-m", "init"],
+        [
+            "git",
+            "-C",
+            str(monkey_repo),
+            "-c",
+            "user.name=Eurus CI",
+            "-c",
+            "user.email=eurus-ci@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "init",
+        ],
         check=True,
     )
     allocation = manager.allocate("assignment-1", owner_id="owner-a")

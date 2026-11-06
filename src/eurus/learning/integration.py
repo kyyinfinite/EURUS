@@ -25,6 +25,8 @@ DEFAULT_STALE_RUNNING_SECONDS = 300.0
 MAX_LESSON_CANDIDATES_PER_RUN = 3
 CANDIDATE_EVENT_TYPES = ("lesson",)
 FAILURE_STOP_MARKERS = ("timeout", "budget", "deadline", "provider", "cancelled")
+MAX_RETENTION_DAYS = 3650
+DEFAULT_RETENTION_BATCH = 200
 
 
 def _now() -> datetime:
@@ -54,7 +56,25 @@ class LearningTickReport:
     failed: int = 0
     lessons_accepted: int = 0
     evaluations_recorded: int = 0
+    evaluations_pruned: int = 0
     requeued: int = 0
+    missions_processed: int = 0
+    missions_failed: int = 0
+    missions_skipped: int = 0
+
+    @property
+    def to_dict(self) -> dict[str, int]:
+        return {
+            "processed": self.processed,
+            "failed": self.failed,
+            "lessons_accepted": self.lessons_accepted,
+            "evaluations_recorded": self.evaluations_recorded,
+            "evaluations_pruned": self.evaluations_pruned,
+            "requeued": self.requeued,
+            "missions_processed": self.missions_processed,
+            "missions_failed": self.missions_failed,
+            "missions_skipped": self.missions_skipped,
+        }
 
 
 class LearningCoordinator:
@@ -64,10 +84,13 @@ class LearningCoordinator:
         *,
         evaluation: EvaluationEngine | None = None,
         lessons: LessonStore | None = None,
+        missions: Any | None = None,
         max_process_attempts: int = DEFAULT_MAX_PROCESS_ATTEMPTS,
         stale_running_seconds: float = DEFAULT_STALE_RUNNING_SECONDS,
         batch_limit: int = 20,
         process_inline: bool = True,
+        evaluation_retention_days: int | None = None,
+        retention_batch_limit: int = DEFAULT_RETENTION_BATCH,
     ) -> None:
         if not 1 <= max_process_attempts <= 10:
             raise ValueError("max_process_attempts must be between 1 and 10")
@@ -75,9 +98,17 @@ class LearningCoordinator:
             raise ValueError("stale_running_seconds must be at least 1")
         if not 1 <= batch_limit <= 200:
             raise ValueError("batch_limit must be between 1 and 200")
+        if evaluation_retention_days is not None and not (
+            1 <= evaluation_retention_days <= MAX_RETENTION_DAYS
+        ):
+            raise ValueError(
+                "evaluation_retention_days must be between 1 and "
+                f"{MAX_RETENTION_DAYS} when provided"
+            )
         self.database = database if isinstance(database, Database) else Database(database)
         self.evaluation = evaluation or EvaluationEngine(self.database)
         self.lessons = lessons
+        self.missions = missions
         self.runs = RunStore(self.database)
         self.events = EventStore(self.database)
         self.attempts = ToolAttemptStore(self.database)
@@ -85,6 +116,8 @@ class LearningCoordinator:
         self.stale_running_seconds = stale_running_seconds
         self.batch_limit = batch_limit
         self.process_inline = process_inline
+        self.evaluation_retention_days = evaluation_retention_days
+        self.retention_batch_limit = retention_batch_limit
 
     def on_job_finished(self, job: Job, status: str, result: str, error: str | None) -> None:
         if status not in TERMINAL_JOB_STATUSES:
@@ -153,6 +186,7 @@ class LearningCoordinator:
     ) -> LearningTickReport:
         report = LearningTickReport()
         current = now or _now()
+        report.evaluations_pruned = self._prune_expired()
         self._requeue_stale(current, report, owner_id=owner_id)
         tasks = self.pending_tasks(limit=min(limit, self.batch_limit), owner_id=owner_id)
         for task in tasks:
@@ -170,7 +204,36 @@ class LearningCoordinator:
             report.processed += 1
             report.evaluations_recorded += outcome.evaluations_recorded
             report.lessons_accepted += outcome.lessons_accepted
+        self._process_missions(report, owner_id=owner_id)
         return report
+
+    def _prune_expired(self) -> int:
+        if self.evaluation_retention_days is None:
+            return 0
+        try:
+            return self.evaluation.prune(
+                retention_days=self.evaluation_retention_days,
+                batch_limit=self.retention_batch_limit,
+            )
+        except Exception:
+            log.exception("evaluation retention pruning failed")
+            return 0
+
+    def _process_missions(self, report: LearningTickReport, *, owner_id: str | None) -> None:
+        if self.missions is None:
+            return
+        try:
+            mission_report = self.missions.backfill(owner_id=owner_id, limit=self.batch_limit)
+        except Exception:
+            log.exception("mission learning backfill failed")
+            report.missions_failed += 1
+            return
+        report.missions_processed += mission_report.processed
+        report.missions_failed += mission_report.failed
+        report.missions_skipped += mission_report.skipped
+        report.failed += mission_report.failed
+        report.evaluations_recorded += mission_report.evaluations_recorded
+        report.lessons_accepted += mission_report.lessons_accepted
 
     def stats(self, *, owner_id: str | None = None) -> dict[str, int]:
         scope = ""
@@ -186,6 +249,15 @@ class LearningCoordinator:
                     (status, *values),
                 ).fetchone()
                 counts[status] = int(row[0])
+        if self.missions is not None:
+            try:
+                mission_stats = self.missions.stats(owner_id=owner_id)
+            except Exception:
+                log.exception("mission learning stats collection failed")
+                mission_stats = {}
+            counts["mission_terminal"] = int(mission_stats.get("terminal", 0))
+            counts["mission_learned"] = int(mission_stats.get("learned", 0))
+            counts["mission_pending"] = int(mission_stats.get("pending", 0))
         return counts
 
     def deactivate(self, provenance_id: str, *, owner_id: str | None = None) -> bool:

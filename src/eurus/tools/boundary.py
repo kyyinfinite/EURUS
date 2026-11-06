@@ -202,6 +202,7 @@ class ToolExecutionBoundary:
         attempt: str,
         run_id: str | None,
         status: ToolExecutionStatus,
+        outcome: ToolExecutionOutcome | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "tool": tool.name,
@@ -209,11 +210,27 @@ class ToolExecutionBoundary:
             "attempt_id": attempt,
             "run_id": run_id,
             "status": status.value,
+            "is_error": bool(outcome.is_error) if outcome is not None else False,
+            "error_code": (
+                OUTCOME_ERROR_CODES.get(outcome.status.value, "") if outcome is not None else ""
+            ),
+            "duration_ms": self._duration_ms(outcome),
+            "uncertain": bool(outcome.uncertain) if outcome is not None else False,
         }
         envelope = self.context.envelope
         if envelope is not None:
             payload["envelope_id"] = envelope.envelope_id
         return payload
+
+    @staticmethod
+    def _duration_ms(outcome: ToolExecutionOutcome | None) -> float | None:
+        if outcome is None or outcome.finished_at is None:
+            return None
+        started = outcome.started_at
+        if started is None:
+            return 0.0
+        delta = outcome.finished_at - started
+        return round(delta.total_seconds() * 1000.0, 3)
 
     def _denied(
         self,
@@ -518,7 +535,7 @@ class ToolExecutionBoundary:
                     )
                     await self._emit(
                         "tool.finished",
-                        self._finished_event(call, tool, attempt, run_id, outcome.status),
+                        self._finished_event(call, tool, attempt, run_id, outcome.status, outcome),
                     )
                     await self._record(outcome)
                     raise
@@ -550,7 +567,7 @@ class ToolExecutionBoundary:
                         outcome = await self._resolve_by_verification(call, tool, outcome, timeout)
                     await self._emit(
                         "tool.finished",
-                        self._finished_event(call, tool, attempt, run_id, outcome.status),
+                        self._finished_event(call, tool, attempt, run_id, outcome.status, outcome),
                     )
                     return outcome
                 except ToolError as exc:
@@ -570,7 +587,7 @@ class ToolExecutionBoundary:
                     )
                     await self._emit(
                         "tool.finished",
-                        self._finished_event(call, tool, attempt, run_id, outcome.status),
+                        self._finished_event(call, tool, attempt, run_id, outcome.status, outcome),
                     )
                     return outcome
                 except Exception as exc:
@@ -590,7 +607,7 @@ class ToolExecutionBoundary:
                     )
                     await self._emit(
                         "tool.finished",
-                        self._finished_event(call, tool, attempt, run_id, outcome.status),
+                        self._finished_event(call, tool, attempt, run_id, outcome.status, outcome),
                     )
                     return outcome
                 if isinstance(output, ToolOutput):
@@ -642,13 +659,7 @@ class ToolExecutionBoundary:
                 )
                 await self._emit(
                     "tool.finished",
-                    {
-                        "tool": tool.name,
-                        "call_id": call.id,
-                        "attempt_id": attempt,
-                        "run_id": run_id,
-                        "status": outcome.status.value,
-                    },
+                    self._finished_event(call, tool, attempt, run_id, outcome.status, outcome),
                 )
                 return outcome
         finally:
@@ -705,7 +716,7 @@ class ToolExecutionBoundary:
         )
         await self._emit(
             "tool.finished",
-            self._finished_event(call, tool, attempt, run_id, outcome.status),
+            self._finished_event(call, tool, attempt, run_id, outcome.status, outcome),
         )
         return outcome
 

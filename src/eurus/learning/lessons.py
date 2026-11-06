@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 from eurus.memory.manager import MemoryManager
 
@@ -83,10 +84,16 @@ class LessonStore:
         terms = _terms(task)[:MAX_QUERY_TERMS]
         if self.limit < 1 or not terms or not self.database.exists():
             return []
-        rows = self._manager().store.search_memories_any(
-            terms, self.limit, category=CATEGORY, scope=lesson_scope(owner_id)
+        pool = self._manager().store.list_memories(
+            category=CATEGORY, limit=self.max_lessons, scope=lesson_scope(owner_id)
         )
-        return [row["content"] for row in rows]
+        scored: list[tuple[float, int, str]] = []
+        for index, row in enumerate(pool):
+            score = _similarity(task, str(row["content"]))
+            if score > 0:
+                scored.append((-score, index, str(row["content"])))
+        scored.sort()
+        return [text for _, _, text in scored[: self.limit]]
 
     def all(self, *, owner_id: str | None = None) -> list[str]:
         if not self.database.exists():
@@ -104,9 +111,12 @@ class LessonStore:
             raise ValueError("shared lessons require an owning owner identity")
         if self.is_duplicate(lesson, owner_id=owner_id):
             return None
-        if len(self.all(owner_id=owner_id)) >= self.max_lessons:
-            return None
         scope = GLOBAL_SCOPE if shared or not owner_id else lesson_scope(owner_id)
+        rows = self._scope_rows(scope)
+        if len(rows) >= self.max_lessons:
+            oldest = rows[-1]
+            if not self._manager().forget(int(oldest["id"])):
+                return None
         return self._manager().store.add_memory(
             lesson,
             tags="auto",
@@ -115,6 +125,11 @@ class LessonStore:
             source="reflector",
             confidence=0.75,
             scope=scope,
+        )
+
+    def _scope_rows(self, scope: str) -> list[dict[str, Any]]:
+        return self._manager().store.list_memories_in_scope(
+            scope, category=CATEGORY, limit=max(self.max_lessons, 1)
         )
 
     def remove(self, memory_id: int, *, owner_id: str | None = None) -> bool:

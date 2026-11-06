@@ -5,7 +5,7 @@ import sqlite3
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +31,9 @@ EVALUATORS = frozenset({"deterministic", "agent"})
 LESSON_MIN_LENGTH = 15
 LESSON_MAX_LENGTH = 200
 BUDGET_STOP_MARKERS = ("budget", "iteration", "deadline", "token")
+PRUNE_PROTECTED_SUBJECT_TYPES = frozenset({"mission"})
+MAX_PRUNE_BATCH = 2000
+DEFAULT_PRUNE_BATCH = 200
 
 
 def _now() -> datetime:
@@ -249,6 +252,34 @@ class EvaluationEngine:
                 (*values, limit),
             ).fetchall()
         return [self._evaluation(row) for row in rows]
+
+    def prune(self, *, retention_days: int, batch_limit: int = DEFAULT_PRUNE_BATCH) -> int:
+        if retention_days <= 0:
+            return 0
+        if not 1 <= batch_limit <= MAX_PRUNE_BATCH:
+            raise ValueError(f"batch_limit must be between 1 and {MAX_PRUNE_BATCH}")
+        cutoff = _time(_now() - timedelta(days=retention_days))
+        protected = "', '".join(sorted(PRUNE_PROTECTED_SUBJECT_TYPES))
+        with self.database.connection() as connection:
+            rows = connection.execute(
+                f"SELECT evaluation_id FROM eurus_evaluations "
+                f"WHERE created_at < ? AND subject_type NOT IN ('{protected}') "
+                f"ORDER BY created_at LIMIT ?",
+                (cutoff, batch_limit),
+            ).fetchall()
+            doomed = [str(row["evaluation_id"]) for row in rows]
+            if not doomed:
+                return 0
+            placeholders = ",".join("?" for _ in doomed)
+            connection.execute(
+                f"DELETE FROM eurus_evaluations WHERE evaluation_id IN ({placeholders})",
+                doomed,
+            )
+            connection.execute(
+                f"DELETE FROM eurus_learning_provenance WHERE evaluation_id IN ({placeholders})",
+                doomed,
+            )
+        return len(doomed)
 
     def evaluate_run(
         self,

@@ -264,3 +264,48 @@ def missions_finalize(mission_id: str, required_checks: tuple[str, ...]) -> None
         console.print(f"  failed checks: {', '.join(decision.failed_check_names)}")
     if decision.unavailable_check_names:
         console.print(f"  missing checks: {', '.join(decision.unavailable_check_names)}")
+
+
+@missions_group.command("learning")
+@click.argument("mission_id")
+def missions_learning(mission_id: str) -> None:
+    _require_missions_enabled()
+    from eurus.learning.missions import MissionLearning
+
+    learning = MissionLearning(paths.database_path())
+    view = learning.learning_view(mission_id, owner_id=_OWNER)
+    if view is None:
+        raise click.ClickException(f"mission {mission_id} not found")
+    console = Console()
+    console.print(
+        f"mission={mission_id[:12]} status={view['status']} learned={str(view['learned']).lower()}"
+    )
+    for item in view["evaluations"]:
+        console.print(
+            f"  {item['dimension']} score={item['score']} passed={str(item['passed']).lower()}"
+        )
+    for lesson in view["lessons"]:
+        console.print(f"  lesson: {lesson['text'][:120]}")
+
+
+@missions_group.command("analytics")
+@click.option("--limit", type=click.IntRange(1, 200), default=100, show_default=True)
+def missions_analytics(limit: int) -> None:
+    _require_missions_enabled()
+    from eurus.learning.missions import MissionLearning
+
+    snapshot = MissionLearning(paths.database_path()).analytics(owner_id=_OWNER, limit=limit)
+    console = Console()
+    console.print(
+        f"missions={snapshot['missions_total']} learned={snapshot['missions_learned']} "
+        f"expired={snapshot['expired']}"
+    )
+    for status, count in sorted(snapshot["decisions"].items()):
+        console.print(f"  decision {status}={count}")
+    for role in snapshot["roles"]:
+        console.print(
+            f"  role {role['role']} tasks={role['tasks']} succeeded={role['succeeded']} "
+            f"failed={role['failed']} blocked={role['blocked']} revisions={role['revisions']}"
+        )
+    for lesson in snapshot["lessons"]:
+        console.print(f"  lesson: {lesson['text'][:120]}")

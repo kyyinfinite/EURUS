@@ -291,10 +291,12 @@ class ScheduledRunSkillHook:
         task = asyncio.create_task(self._draft_job(job, result))
         self._pending.add(task)
         task.add_done_callback(self._pending.discard)
+        await asyncio.sleep(0)
 
     async def _draft_job(self, job: Any, result: str) -> SkillDraft | None:
         try:
-            return await asyncio.wait_for(self._draft(job.objective, result), timeout=120.0)
+            async with asyncio.timeout(120.0):
+                return await self._draft(job.objective, result)
         except Exception:
             log.debug("scheduled skill draft failed", exc_info=True)
             return None

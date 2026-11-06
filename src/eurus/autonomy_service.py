@@ -21,12 +21,12 @@ log = logging.getLogger(__name__)
 LOCK_FILE_NAME = "autonomy.lock"
 STATE_FILE_NAME = "autonomy_state.json"
 AUTONOMY_SUBSYSTEMS = ("goals", "workflows", "events", "specialists", "learning")
-SUPERVISOR_SUBSYSTEM_MAP = {
-    "goals": "goals",
-    "workflows": "workflows",
-    "events": "events",
-    "specialists": "assignments",
-    "learning": "learning",
+SUPERVISOR_SUBSYSTEM_MAP: dict[str, tuple[str, ...]] = {
+    "goals": ("goals",),
+    "workflows": ("workflows",),
+    "events": ("events",),
+    "specialists": ("assignments", "missions"),
+    "learning": ("learning",),
 }
 
 
@@ -391,19 +391,20 @@ class AutonomyService:
             self._toggles[name] = value
             applied = True
             if self.mode == "owner" and self._stack is not None:
-                supervisor_name = SUPERVISOR_SUBSYSTEM_MAP.get(name)
+                supervisor_names = SUPERVISOR_SUBSYSTEM_MAP.get(name, ())
                 supervisor = getattr(self._stack, "supervisor", None)
-                if supervisor is not None and supervisor_name is not None:
+                if supervisor is not None and supervisor_names:
                     current = supervisor.enabled_subsystems
                     if current is None:
                         from eurus.automation.supervision import SUBSYSTEM_NAMES
 
                         current = set(SUBSYSTEM_NAMES)
                         supervisor.enabled_subsystems = current
-                    if value:
-                        current.add(supervisor_name)
-                    else:
-                        current.discard(supervisor_name)
+                    for supervisor_name in supervisor_names:
+                        if value:
+                            current.add(supervisor_name)
+                        else:
+                            current.discard(supervisor_name)
         if applied:
             self._save_state()
         return applied

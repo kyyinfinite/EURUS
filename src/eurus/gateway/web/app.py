@@ -22,7 +22,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
 from eurus import __version__
 from eurus.autonomy_service import AutonomyService
@@ -354,6 +354,10 @@ def create_app(ctx: GatewayContext, *, static_dir: Path | None = None) -> FastAP
     async def create_mission(payload: MissionCreateRequest) -> dict[str, Any]:
         return service.create_mission(payload.model_dump())
 
+    @app.get("/api/missions/analytics")
+    async def mission_analytics() -> dict[str, Any]:
+        return service.mission_analytics()
+
     @app.get("/api/missions/{mission_id}")
     async def mission_detail(mission_id: str) -> dict[str, Any]:
         return service.mission_detail(mission_id)
@@ -397,6 +401,27 @@ def create_app(ctx: GatewayContext, *, static_dir: Path | None = None) -> FastAP
     @app.get("/api/missions/{mission_id}/reviews")
     async def mission_reviews(mission_id: str) -> list[dict[str, Any]]:
         return service.mission_reviews(mission_id)
+
+    @app.get("/api/missions/{mission_id}/learning")
+    async def mission_learning(mission_id: str) -> dict[str, Any]:
+        return service.mission_learning_view(mission_id)
+
+    @app.get("/api/artifacts")
+    async def artifacts_list(
+        run_id: str = "",
+        limit: int = Query(default=50, ge=1, le=500),
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        return service.list_artifacts(run_id=run_id, limit=limit, cursor=cursor)
+
+    @app.get("/api/artifacts/{artifact_id}")
+    async def artifact_detail(artifact_id: str) -> dict[str, Any]:
+        return service.artifact_detail(artifact_id)
+
+    @app.get("/api/artifacts/{artifact_id}/content")
+    async def artifact_content(artifact_id: str) -> Response:
+        data, media_type = service.artifact_content(artifact_id)
+        return Response(content=data, media_type=media_type)
 
     @app.get("/api/autonomy")
     async def autonomy_status() -> dict[str, Any]:

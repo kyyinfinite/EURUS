@@ -43,6 +43,61 @@
   the dead `RESEARCH_ENGINE.md` link removed; `scripts/check_docs_links.py` now
   covers `docs/` recursively and `benchmarks/`.
 
+### Mission learning and progression stabilization
+
+- Mission learning is fully integrated: `LearningCoordinator` accepts a
+  `missions` subsystem and a validated `evaluation_retention_days`, the tick report
+  carries `missions_processed`/`missions_failed`/`missions_skipped`/`evaluations_pruned`,
+  and coordinator stats expose `mission_terminal`/`mission_learned`/`mission_pending`.
+  `build_stack` wires `MissionLearning` and `MissionProgression` from configuration
+  (`[learning] mission_learning`, `[agentic_engineering] autonomous_progression`),
+  and the `AutonomyStack` exposes `missions`.
+- The runtime supervisor gained a `missions` subsystem: report counters
+  (`missions_ticked`, `mission_tasks_dispatched`, `missions_finalized`), per-subsystem
+  backoff, async off-loop execution, and health snapshots; the autonomy service maps the
+  specialists toggle to both `assignments` and `missions`.
+- Mission surfaces: `GET /api/missions/{id}/learning`, `GET /api/missions/analytics`
+  (declared before the `{mission_id}` route so the literal path wins), `422` responses
+  when agentic engineering is disabled, and CLI `eurus missions learning` / `analytics`.
+- Lesson retrieval now ranks candidates by deterministic term overlap with owner
+  scoping, and `LessonStore.add` rotates the oldest lesson within its own scope
+  (global vs per-owner) when the capacity is reached instead of silently refusing.
+- `EvaluationEngine.prune(retention_days, batch_limit)` removes expired evaluations
+  and their provenance in bounded, repeatable batches while preserving mission
+  learning markers; retention is configurable via `[learning] evaluation_retention_days`
+  (0 disables pruning).
+
+### Artifact and MCP recovery stabilization
+
+- `ArtifactStore.list_page` provides stable keyset pagination
+  (`created_at DESC, artifact_id DESC`) with validated cursors, expiry filtering and
+  clamped limits; `count_active` backs the gateway totals. The gateway exposes
+  `GET /api/artifacts`, `GET /api/artifacts/{id}` and `GET /api/artifacts/{id}/content`
+  with owner isolation, `422` for malformed cursors and `404` for unknown, expired,
+  missing or tampered artifacts.
+- MCP connections recover from transient failures: `connect` retries failed servers
+  with bounded exponential backoff (cancellable, non-retryable auth failures exempt),
+  `register_tools` before connect defers and flushes after discovery or reconnection
+  without duplicate registrations, and `MCPToolManager.health_check()` reports
+  `connected`/`disconnected`/`unreachable` per server and demotes dead sessions.
+
+### Security and reliability hardening
+
+- Browser URL validation rejects embedded credentials and out-of-range ports while
+  preserving legitimate HTTP/HTTPS behavior; `browser_download` now requires owner
+  approval; `WorkspaceManager` refuses to hand an allocated assignment to a second owner.
+- Completed tool events now carry `duration_ms`, `is_error`, `error_code` and
+  `uncertain`, including timeout-status outputs mapped through `OUTCOME_ERROR_CODES`.
+- The durable runtime event stream no longer loses the final event when the engine
+  task and the queue consumer complete in the same wait round (the previous race
+  silently dropped the `done` event and its usage totals).
+- The scheduled-run skill hook yields once after scheduling its draft task and uses
+  `asyncio.timeout`, so the draft executes reliably on Python 3.11 instead of being
+  cancelled with the caller's loop.
+- CI installs LibreOffice and poppler for the office QA rendering contract, restores
+  the frontend test job, and the test suite's git fixture sets an explicit commit
+  identity for runners without one.
+
 ### Critical fixes
 
 - JSON Schema validation now uses the mature `jsonschema` implementation (already a

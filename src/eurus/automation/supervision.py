@@ -27,6 +27,7 @@ DEFAULT_BACKOFF_MAX_SECONDS = 300.0
 SUBSYSTEM_NAMES = (
     "leases",
     "assignments",
+    "missions",
     "workflows",
     "goals",
     "events",
@@ -61,6 +62,12 @@ class LearningTicker(Protocol):
     def tick(
         self, *, now: datetime | None = None, limit: int = 20, owner_id: str | None = None
     ) -> Any: ...
+
+    def stats(self, *, owner_id: str | None = None) -> dict[str, int]: ...
+
+
+class MissionTicker(Protocol):
+    def tick(self, *, owner_id: str | None = None, now: datetime | None = None) -> Any: ...
 
     def stats(self, *, owner_id: str | None = None) -> dict[str, int]: ...
 
@@ -113,6 +120,9 @@ class SupervisionReport:
     events_dispatched: int = 0
     jobs_submitted_by_goals: int = 0
     learning_processed: int = 0
+    missions_ticked: int = 0
+    mission_tasks_dispatched: int = 0
+    missions_finalized: int = 0
     scheduler_dispatched: int = 0
     runs_reaped: list[str] = field(default_factory=list)
     subsystem_errors: dict[str, str] = field(default_factory=dict)
@@ -128,6 +138,7 @@ class RuntimeSupervisor:
         workflows: WorkflowTicker | None = None,
         events: EventDispatcher | None = None,
         assignments: Any = None,
+        missions: MissionTicker | None = None,
         learning: LearningTicker | None = None,
         runs: RunStore | None = None,
         trajectory: TrajectoryStore | None = None,
@@ -154,6 +165,7 @@ class RuntimeSupervisor:
         self.workflows = workflows
         self.events = events
         self.assignments = assignments
+        self.missions = missions
         self.learning = learning
         self.runs = runs
         self.trajectory = trajectory
@@ -179,6 +191,7 @@ class RuntimeSupervisor:
         report = SupervisionReport()
         self._run_subsystem("leases", report, self._recover_leases, current)
         self._run_subsystem("assignments", report, self._recover_stale_assignments, current)
+        self._run_subsystem("missions", report, self._tick_missions, current)
         self._run_subsystem("workflows", report, self._tick_workflows, current)
         self._run_subsystem("goals", report, self._tick_goals, current)
         self._run_subsystem("events", report, self._dispatch_events, current)
@@ -199,6 +212,9 @@ class RuntimeSupervisor:
         )
         await asyncio.to_thread(
             self._run_subsystem, "assignments", report, self._recover_stale_assignments, current
+        )
+        await asyncio.to_thread(
+            self._run_subsystem, "missions", report, self._tick_missions, current
         )
         await asyncio.to_thread(
             self._run_subsystem, "workflows", report, self._tick_workflows, current
@@ -295,6 +311,14 @@ class RuntimeSupervisor:
             return
         learning_report = self.learning.tick(now=current, owner_id=self.owner_id)
         report.learning_processed = learning_report.processed
+
+    def _tick_missions(self, report: SupervisionReport, current: datetime) -> None:
+        if self.missions is None:
+            return
+        progression = self.missions.tick(owner_id=self.owner_id, now=current)
+        report.missions_ticked = int(getattr(progression, "missions_checked", 0) or 0)
+        report.mission_tasks_dispatched = len(getattr(progression, "dispatched", ()) or ())
+        report.missions_finalized = len(getattr(progression, "finalized", ()) or ())
 
     def _reap_stale_runs(self, report: SupervisionReport, current: datetime) -> None:
         if self.runs is None:
@@ -490,6 +514,12 @@ class RuntimeSupervisor:
             except Exception:
                 log.exception("assignment health collection failed")
                 snapshot["stale_assignments"] = None
+        if self.missions is not None:
+            try:
+                snapshot["missions"] = self.missions.stats(owner_id=self.owner_id)
+            except Exception:
+                log.exception("mission health collection failed")
+                snapshot["missions"] = None
         if self.learning is not None:
             try:
                 snapshot["learning"] = self.learning.stats(owner_id=self.owner_id)

@@ -2,9 +2,9 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { BarChart3, ArrowRight, Info } from "lucide-react";
+import { BarChart3, ArrowRight, BrainCircuit, Info } from "lucide-react";
 import { api } from "../lib/api";
-import type { RunView } from "../lib/types";
+import type { MissionAnalyticsView, RunView } from "../lib/types";
 import { Card, EmptyState, ErrorState, LoadingState, PageHeader, StatusIndicator } from "../components/ui";
 import { BarSeries, DonutMeter } from "../components/charts/Charts";
 
@@ -16,6 +16,12 @@ export default function Analytics() {
   const runsQuery = useQuery({
     queryKey: ["runs", "analytics", 1000],
     queryFn: () => api.get<RunView[]>("/api/runs?limit=1000"),
+    refetchInterval: 30_000,
+  });
+
+  const missionQuery = useQuery({
+    queryKey: ["missions", "analytics"],
+    queryFn: () => api.get<MissionAnalyticsView>("/api/missions/analytics"),
     refetchInterval: 30_000,
   });
 
@@ -94,6 +100,7 @@ export default function Analytics() {
         }
       />
       <div className="space-y-5 px-4 pb-28 sm:px-6 md:pb-12 lg:px-8">
+        <MissionIntelligence query={missionQuery} />
         {runsQuery.isLoading ? (
           <LoadingState label="Loading run history…" />
         ) : runsQuery.isError ? (
@@ -193,6 +200,122 @@ export default function Analytics() {
         )}
       </div>
     </div>
+  );
+}
+
+function MissionIntelligence({ query }: { query: {
+  isLoading: boolean;
+  isError: boolean;
+  error: unknown;
+  data?: MissionAnalyticsView;
+} }) {
+  if (query.isLoading) {
+    return null;
+  }
+  if (query.isError) {
+    return (
+      <Card title="Mission intelligence" icon={<BrainCircuit size={16} className="text-copper" />}>
+        <ErrorState
+          detail="Mission intelligence unavailable"
+          hint="The gateway rejected the analytics request. Enable agentic engineering to collect it."
+        />
+      </Card>
+    );
+  }
+  const snapshot = query.data;
+  if (!snapshot || snapshot.missions_total === 0) {
+    return (
+      <Card title="Mission intelligence" icon={<BrainCircuit size={16} className="text-copper" />}>
+        <EmptyState
+          icon={<BrainCircuit size={24} />}
+          title="No missions have finished yet"
+          description="Terminal missions appear here with outcome decisions, role performance and accepted lessons once the orchestrator completes work."
+        />
+      </Card>
+    );
+  }
+  return (
+    <Card title="Mission intelligence" icon={<BrainCircuit size={16} className="text-copper" />}>
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <StatTile label="Terminal missions" value={String(snapshot.missions_total)} />
+        <StatTile label="Post-mortems learned" value={String(snapshot.missions_learned)} />
+        <StatTile label="Deadline expiries" value={String(snapshot.expired)} />
+        <StatTile
+          label="Lesson backlog"
+          value={String(Math.max(0, snapshot.missions_total - snapshot.missions_learned))}
+        />
+      </div>
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <div>
+          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-faint">Outcomes</h4>
+          <ul className="space-y-1.5">
+            {Object.entries(snapshot.decisions).map(([status, count]) => (
+              <li
+                key={status}
+                className="flex items-center justify-between rounded-lg border border-line-soft bg-canvas/60 px-3 py-1.5 text-xs"
+              >
+                <span className="text-muted">{status.replace(/_/g, " ")}</span>
+                <span className="font-mono font-semibold text-ink">{count}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div>
+          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-faint">Role performance</h4>
+          {snapshot.roles.length === 0 ? (
+            <p className="text-xs text-muted">No specialist assignments recorded yet.</p>
+          ) : (
+            <ul className="space-y-1.5">
+              {snapshot.roles.map((role) => (
+                <li
+                  key={role.role}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line-soft bg-canvas/60 px-3 py-1.5 text-xs"
+                >
+                  <span className="font-semibold text-ink">{role.role}</span>
+                  <span className="font-mono text-2xs text-muted">
+                    tasks={role.tasks} succeeded={role.succeeded} failed={role.failed} blocked={role.blocked}{" "}
+                    revisions={role.revisions}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+      <div className="mt-4">
+        <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-faint">Dimension means</h4>
+        {Object.keys(snapshot.dimension_means).length === 0 ? (
+          <p className="text-xs text-muted">No post-mortem evaluations recorded yet.</p>
+        ) : (
+          <ul className="grid gap-1.5 sm:grid-cols-2">
+            {Object.entries(snapshot.dimension_means).map(([dimension, mean]) => (
+              <li
+                key={dimension}
+                className="flex items-center justify-between rounded-lg border border-line-soft bg-canvas/60 px-3 py-1.5 text-xs"
+              >
+                <span className="text-muted">{dimension.replace(/_/g, " ")}</span>
+                <span className="font-mono font-semibold text-ink">{mean}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      {snapshot.lessons.length > 0 && (
+        <div className="mt-4">
+          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-faint">Accepted lessons</h4>
+          <ul className="space-y-1.5">
+            {snapshot.lessons.map((lesson) => (
+              <li
+                key={lesson.lesson_id}
+                className="rounded-lg border border-line-soft bg-canvas/60 px-3 py-2 text-xs leading-relaxed text-muted"
+              >
+                {lesson.text}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Card>
   );
 }
 

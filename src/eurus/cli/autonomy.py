@@ -34,6 +34,7 @@ class AutonomyStack:
     supervisor: Any
     trajectory: Any = None
     learning: Any = None
+    missions: Any = None
 
     def close(self) -> None:
         if self.supervisor is not None and hasattr(self.supervisor, "close"):
@@ -230,6 +231,22 @@ def build_stack(
         else None
     )
     specialist_lookup.bind(orchestrator)
+    missions: Any = None
+    if (
+        enable_specialists
+        and orchestrator is not None
+        and config.agentic_engineering.enabled
+        and config.agentic_engineering.autonomous_progression
+    ):
+        from eurus.agent.mission_runtime import MissionProgression
+        from eurus.agent.review_loop import ReviewLoop
+        from eurus.agent.supervisor import MainSupervisor
+
+        missions = MissionProgression(
+            MainSupervisor(database, orchestrator),
+            review=ReviewLoop(database, max_cycles=config.agentic_engineering.max_review_cycles),
+            hierarchical_dispatch=config.agentic_engineering.hierarchical_dispatch,
+        )
     learning: LearningCoordinator | None = None
     if enable_learning:
         lessons = LessonStore(
@@ -237,7 +254,17 @@ def build_stack(
             limit=config.learning.lessons_in_prompt,
             max_lessons=config.learning.max_lessons,
         )
-        learning = LearningCoordinator(database, lessons=lessons)
+        mission_learning: Any = None
+        if config.learning.mission_learning and config.agentic_engineering.enabled:
+            from eurus.learning.missions import MissionLearning
+
+            mission_learning = MissionLearning(database, lessons=lessons)
+        learning = LearningCoordinator(
+            database,
+            lessons=lessons,
+            missions=mission_learning,
+            evaluation_retention_days=config.learning.evaluation_retention_days or None,
+        )
         automation.on_job_finished.append(learning.on_job_finished)
         from eurus.learning.effectiveness import SkillOutcomeHook, SkillOutcomeStore
 
@@ -254,6 +281,7 @@ def build_stack(
         workflows=workflows,
         events=events if enable_events else None,
         assignments=orchestrator,
+        missions=missions,
         learning=learning,
         runs=RunStore(database),
         trajectory=trajectory,
@@ -270,6 +298,7 @@ def build_stack(
         supervisor=supervisor,
         trajectory=trajectory,
         learning=learning,
+        missions=missions,
     )
 
 

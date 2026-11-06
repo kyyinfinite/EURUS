@@ -20,6 +20,7 @@ from eurus.termux import is_termux
 PERMISSION_MODES: tuple[str, ...] = ("ask", "auto-edit", "yolo")
 SANDBOX_BACKENDS: tuple[str, ...] = ("container", "host")
 LEARNING_MODES: tuple[str, ...] = ("off", "ask", "auto")
+MAX_EVALUATION_RETENTION_DAYS = 3650
 LOG_LEVELS: tuple[str, ...] = ("DEBUG", "INFO", "WARNING", "ERROR")
 TOP_LEVEL_KEYS = frozenset(
     {
@@ -99,6 +100,8 @@ mode = "ask"
 lessons_in_prompt = 5
 max_lessons = 500
 skills = false
+mission_learning = true
+evaluation_retention_days = 180
 
 [permissions]
 mode = "ask"
@@ -176,6 +179,7 @@ hierarchical_dispatch = true
 strict_tool_scope = true
 max_mission_tasks = 12
 max_review_cycles = 3
+autonomous_progression = true
 """
 
 
@@ -294,6 +298,8 @@ class LearningConfig:
     lessons_in_prompt: int = 5
     max_lessons: int = 500
     skills: bool = False
+    mission_learning: bool = True
+    evaluation_retention_days: int = 180
 
 
 @dataclass(frozen=True, slots=True)
@@ -359,6 +365,7 @@ class AgenticEngineeringConfig:
     strict_tool_scope: bool = True
     max_mission_tasks: int = 12
     max_review_cycles: int = 3
+    autonomous_progression: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -728,19 +735,42 @@ def _build_tools(raw: Mapping[str, Any]) -> ToolsConfig:
 
 def _build_learning(raw: Mapping[str, Any]) -> LearningConfig:
     section = _section(raw, "learning")
-    _check_keys(section, {"mode", "lessons_in_prompt", "max_lessons", "skills"}, "learning")
+    _check_keys(
+        section,
+        {
+            "mode",
+            "lessons_in_prompt",
+            "max_lessons",
+            "skills",
+            "mission_learning",
+            "evaluation_retention_days",
+        },
+        "learning",
+    )
     mode = _get(section, "mode", str, "ask", "learning").strip().lower()
     in_prompt = _get(section, "lessons_in_prompt", int, 5, "learning")
     maximum = _get(section, "max_lessons", int, 500, "learning")
     skills = _get(section, "skills", bool, False, "learning")
+    mission_learning = _get(section, "mission_learning", bool, True, "learning")
+    retention = _get(section, "evaluation_retention_days", int, 180, "learning")
     if mode not in LEARNING_MODES:
         raise ConfigError(f"learning.mode must be one of: {', '.join(LEARNING_MODES)}")
     if not 0 <= in_prompt <= 20:
         raise ConfigError("learning.lessons_in_prompt must be between 0 and 20")
     if not 10 <= maximum <= 10000:
         raise ConfigError("learning.max_lessons must be between 10 and 10000")
+    if not 0 <= retention <= MAX_EVALUATION_RETENTION_DAYS:
+        raise ConfigError(
+            "learning.evaluation_retention_days must be between 0 and "
+            f"{MAX_EVALUATION_RETENTION_DAYS} (0 disables pruning)"
+        )
     return LearningConfig(
-        mode=mode, lessons_in_prompt=in_prompt, max_lessons=maximum, skills=skills
+        mode=mode,
+        lessons_in_prompt=in_prompt,
+        max_lessons=maximum,
+        skills=skills,
+        mission_learning=mission_learning,
+        evaluation_retention_days=retention,
     )
 
 
@@ -1360,6 +1390,7 @@ def _build_agentic_engineering(raw: Mapping[str, Any]) -> AgenticEngineeringConf
             "strict_tool_scope",
             "max_mission_tasks",
             "max_review_cycles",
+            "autonomous_progression",
         },
         "agentic_engineering",
     )
@@ -1382,6 +1413,9 @@ def _build_agentic_engineering(raw: Mapping[str, Any]) -> AgenticEngineeringConf
         strict_tool_scope=True,
         max_mission_tasks=max_tasks,
         max_review_cycles=max_cycles,
+        autonomous_progression=_get(
+            section, "autonomous_progression", bool, True, "agentic_engineering"
+        ),
     )
 
 

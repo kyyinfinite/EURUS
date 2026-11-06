@@ -78,7 +78,7 @@ TOOL_DESCRIPTIONS = {
     ),
     "browser_download": (
         "Download a file from a public HTTP(S) URL into the workspace download directory "
-        "with a bounded size. Returns the saved file path and size."
+        "with a bounded size. Requires owner approval. Returns the saved file path and size."
     ),
     "browser_extract": (
         "Extract structured data from the current page: named fields from element "
@@ -601,6 +601,7 @@ def browser_tools(manager: BrowserManager) -> list[Tool]:
             ),
             handler=toolset.download,
             mutates=True,
+            requires_approval=True,
             parallel_safe=False,
         ),
         Tool(

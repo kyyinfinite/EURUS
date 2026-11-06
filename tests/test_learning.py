@@ -30,12 +30,16 @@ def test_store_finds_relevant_lessons_by_any_term(tmp_path):
     assert store.relevant("zzzz qqqq") == []
 
 
-def test_store_rejects_near_duplicates_and_respects_cap(tmp_path):
+def test_store_rejects_near_duplicates_and_rotates_at_cap(tmp_path):
     store = LessonStore(tmp_path / "db.sqlite3", max_lessons=2)
     assert store.add(LESSON) is not None
     assert store.add("Run the tests after every edit to confirm the fix!") is None
     assert store.add("Prefer small patches over rewriting files.") is not None
-    assert store.add("Check git diff before reporting the final result.") is None
+    assert store.add("Check git diff before reporting the final result.") is not None
+    assert store.all() == [
+        "Check git diff before reporting the final result.",
+        "Prefer small patches over rewriting files.",
+    ]
 
 
 def test_parse_lessons_accepts_fenced_json_and_filters_bad_items():

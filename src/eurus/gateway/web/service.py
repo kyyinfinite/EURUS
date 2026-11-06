@@ -879,6 +879,74 @@ class GatewayService:
         records = store.list_for_mission(mission_id, owner_id=OWNER_ID)
         return [record.to_dict() for record in records]
 
+    def list_artifacts(
+        self, *, run_id: str = "", limit: int = 50, cursor: str | None = None
+    ) -> dict[str, Any]:
+        from eurus.multiagent.artifacts import ArtifactError, ArtifactStore
+
+        store = ArtifactStore(paths.database_path(), _artifact_storage_root())
+        if run_id.strip():
+            try:
+                records = store.list_for_run(OWNER_ID, run_id.strip())
+            except ArtifactError as exc:
+                raise ServiceError("invalid", str(exc)) from exc
+            return {
+                "items": [record.to_dict() for record in records],
+                "next_cursor": None,
+                "total": len(records),
+            }
+        try:
+            page, next_cursor = store.list_page(OWNER_ID, limit=limit, cursor=cursor)
+        except ArtifactError as exc:
+            raise ServiceError("invalid", str(exc)) from exc
+        total = store.count_active(OWNER_ID)
+        return {
+            "items": [record.to_dict() for record in page],
+            "next_cursor": next_cursor,
+            "total": total,
+        }
+
+    def artifact_detail(self, artifact_id: str) -> dict[str, Any]:
+        from eurus.multiagent.artifacts import ArtifactStore
+
+        store = ArtifactStore(paths.database_path(), _artifact_storage_root())
+        try:
+            record = store.get_metadata(artifact_id, owner_id=OWNER_ID)
+        except KeyError as exc:
+            raise ServiceError("not_found", f"unknown artifact {artifact_id}") from exc
+        return record.to_dict()
+
+    def artifact_content(self, artifact_id: str) -> tuple[bytes, str]:
+        from eurus.multiagent.artifacts import ArtifactError, ArtifactStore
+
+        store = ArtifactStore(paths.database_path(), _artifact_storage_root())
+        try:
+            record = store.get_metadata(artifact_id, owner_id=OWNER_ID)
+            data = store.read(artifact_id, owner_id=OWNER_ID)
+        except KeyError as exc:
+            raise ServiceError("not_found", f"unknown artifact {artifact_id}") from exc
+        except ArtifactError as exc:
+            raise ServiceError("not_found", str(exc)) from exc
+        return data, record.media_type or "text/plain"
+
+    def mission_learning_view(self, mission_id: str) -> dict[str, Any]:
+        self._require_missions_enabled()
+        self._mission_or_404(mission_id)
+        from eurus.learning.missions import MissionLearning
+
+        learning = MissionLearning(paths.database_path())
+        view = learning.learning_view(mission_id, owner_id=OWNER_ID)
+        if view is None:
+            raise ServiceError("not_found", f"unknown mission {mission_id}")
+        return view
+
+    def mission_analytics(self) -> dict[str, Any]:
+        self._require_missions_enabled()
+        from eurus.learning.missions import MissionLearning
+
+        learning = MissionLearning(paths.database_path())
+        return learning.analytics(owner_id=OWNER_ID)
+
     def mission_verifications(self, mission_id: str) -> list[dict[str, Any]]:
         self._mission_or_404(mission_id)
         from eurus.agent.acceptance import VerificationStore

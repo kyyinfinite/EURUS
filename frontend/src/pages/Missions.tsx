@@ -1,12 +1,13 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, CircleAlert, CircleCheck, Flag, Play, RotateCcw, Send, ShieldQuestion, StopCircle } from "lucide-react";
+import { Bot, CircleAlert, CircleCheck, Flag, Play, RotateCcw, Send, ShieldQuestion, Sparkles, StopCircle } from "lucide-react";
 import { api } from "../lib/api";
 import type {
   AcceptanceDecisionView,
   MissionArtifactView,
   MissionDetail,
+  MissionLearningView,
   MissionReviewView,
   MissionVerificationView,
   MissionView,
@@ -119,6 +120,10 @@ function MissionDetailPanel({ missionId, onBack }: { missionId: string; onBack: 
   const reviews = useQuery({
     queryKey: ["mission", missionId, "reviews"],
     queryFn: () => api.get<MissionReviewView[]>(`/api/missions/${missionId}/reviews`),
+  });
+  const learning = useQuery({
+    queryKey: ["mission", missionId, "learning"],
+    queryFn: () => api.get<MissionLearningView>(`/api/missions/${missionId}/learning`),
   });
 
   const invalidate = () => {
@@ -247,7 +252,87 @@ function MissionDetailPanel({ missionId, onBack }: { missionId: string; onBack: 
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-faint">Reviews</h3>
         <ReviewPanel reviews={reviews.data ?? []} />
       </Card>
+
+      <LearningPostMortem learning={learning.data ?? null} learningError={learning.error} />
     </div>
+  );
+}
+
+function dimensionLabel(dimension: string): string {
+  return dimension.replace(/_/g, " ");
+}
+
+function LearningPostMortem({
+  learning,
+  learningError,
+}: {
+  learning: MissionLearningView | null;
+  learningError: unknown;
+}) {
+  if (learningError) {
+    return null;
+  }
+  if (!learning) {
+    return null;
+  }
+  return (
+    <Card>
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-faint">
+          Learning post-mortem
+        </h3>
+        {learning.learned ? (
+          <Badge tone="ok">post-mortem recorded</Badge>
+        ) : (
+          <Badge tone="dim">not learned yet</Badge>
+        )}
+        {learning.learned && learning.lessons.length > 0 && (
+          <span className="text-2xs text-faint">
+            {learning.lessons.length} lesson{learning.lessons.length === 1 ? "" : "s"} accepted
+          </span>
+        )}
+      </div>
+      {!learning.learned ? (
+        <p className="text-xs leading-relaxed text-muted">
+          The learning tick records a post-mortem for terminal missions: outcome dimensions,
+          specialist performance and the lessons the agent keeps for future objectives.
+        </p>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex flex-wrap gap-2">
+            {learning.evaluations.map((item) => (
+              <span
+                key={`${item.dimension}-${item.created_at}`}
+                className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-2xs font-medium ${
+                  item.passed
+                    ? "border-sage/40 bg-sage-soft text-sage-dark"
+                    : "border-warn/40 bg-warn-soft text-warn-dark"
+                }`}
+              >
+                {item.passed ? <CircleCheck size={11} /> : <CircleAlert size={11} />}
+                <span>{dimensionLabel(item.dimension)}</span>
+                <span className="font-mono">{item.score}</span>
+              </span>
+            ))}
+          </div>
+          {learning.lessons.length > 0 ? (
+            <ul className="space-y-1.5">
+              {learning.lessons.map((lesson) => (
+                <li
+                  key={lesson.lesson_id}
+                  className="flex items-start gap-2 rounded-lg border border-line-soft bg-canvas/60 px-3 py-2 text-xs leading-relaxed text-muted"
+                >
+                  <Sparkles size={12} className="mt-0.5 shrink-0 text-copper" />
+                  {lesson.text}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-xs text-muted">No lessons were accepted from this mission.</p>
+          )}
+        </div>
+      )}
+    </Card>
   );
 }
 

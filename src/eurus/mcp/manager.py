@@ -23,6 +23,7 @@ _SAFE_NAME = re.compile(r"[^A-Za-z0-9_]+")
 _MAX_SCHEMA_BYTES = 64_000
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _SHUTDOWN_TIMEOUT = 10.0
+_RETRY_DELAYS: tuple[float, ...] = (0.5, 1.0, 2.0, 4.0)
 
 
 def _is_loopback_url(url: str) -> bool:
@@ -184,6 +185,7 @@ class MCPToolManager:
         self._connected = False
         self._registered_names: set[str] = set()
         self._registered_handlers: dict[str, Any] = {}
+        self._pending_registrations: list[tuple[ToolRegistry, Callable[[str], bool] | None]] = []
         self._lock = asyncio.Lock()
         self._server_locks: dict[str, asyncio.Lock] = {
             name: asyncio.Lock() for name in self.configs
@@ -237,6 +239,7 @@ class MCPToolManager:
                 if conn.config.enabled
                 and conn.state not in {ServerState.CONNECTED, ServerState.CONNECTING}
             ]:
+                self._flush_registrations()
                 return
             pending = [
                 conn
@@ -248,10 +251,41 @@ class MCPToolManager:
                 self._import_sdk()
             for conn in pending:
                 self._spawn(conn)
-        await asyncio.gather(
-            *(self._await_settled(conn) for conn in pending), return_exceptions=True
-        )
-        self._connected = True
+            self._connected = True
+        try:
+            await asyncio.gather(
+                *(self._connect_with_retries(conn) for conn in pending), return_exceptions=True
+            )
+        finally:
+            self._flush_registrations()
+
+    async def _connect_with_retries(self, conn: _ServerConnection) -> None:
+        for index in range(len(_RETRY_DELAYS) + 1):
+            await self._await_settled(conn)
+            if conn.state is not ServerState.FAILED:
+                return
+            if self._closing or index >= len(_RETRY_DELAYS):
+                return
+            await asyncio.sleep(_RETRY_DELAYS[index])
+            if self._closing:
+                return
+            async with self._server_lock(conn.config.name):
+                if self._closing:
+                    return
+                await self._stop_task(conn)
+                if self._closing:
+                    return
+                self._spawn(conn)
+
+    def _flush_registrations(self) -> int:
+        if not self._pending_registrations:
+            return 0
+        pending = self._pending_registrations
+        self._pending_registrations = []
+        count = 0
+        for registry, deny in pending:
+            count += self.register_tools(registry, deny)
+        return count
 
     def _spawn(self, conn: _ServerConnection) -> None:
         conn.stop = asyncio.Event()
@@ -391,6 +425,7 @@ class MCPToolManager:
             conn.error = (
                 f"skipped tool(s) with conflicting exposed names: {', '.join(sorted(conflicts))}"
             )
+        self._flush_registrations()
 
     def _discard(self, conn: _ServerConnection) -> None:
         for exposed in conn.owned_tools:
@@ -427,6 +462,38 @@ class MCPToolManager:
 
     def _server_lock(self, name: str) -> asyncio.Lock:
         return self._server_locks.setdefault(name, asyncio.Lock())
+
+    async def health_check(self) -> dict[str, str]:
+        report: dict[str, str] = {}
+        for name, conn in list(self._connections.items()):
+            if not conn.config.enabled:
+                report[name] = ServerState.DISABLED.value
+                continue
+            if conn.state is not ServerState.CONNECTED:
+                report[name] = conn.state.value
+                continue
+            if conn.task is None or conn.task.done():
+                self._mark_disconnected(conn, "supervision task finished")
+                report[name] = "disconnected"
+                continue
+            session = self._sessions.get(name)
+            if session is None:
+                self._mark_disconnected(conn, "session missing")
+                report[name] = "disconnected"
+                continue
+            try:
+                await asyncio.wait_for(session.list_tools(), timeout=conn.config.timeout_seconds)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self._mark_disconnected(conn, "health probe failed")
+                report[name] = "unreachable"
+        return report
+
+    def _mark_disconnected(self, conn: _ServerConnection, reason: str) -> None:
+        self._discard(conn)
+        conn.state = ServerState.DISCONNECTED
+        conn.error = conn.error or reason
 
     async def _stop_task(self, conn: _ServerConnection) -> None:
         task, stop = conn.task, conn.stop
@@ -481,7 +548,8 @@ class MCPToolManager:
         self, registry: ToolRegistry, deny: Callable[[str], bool] | None = None
     ) -> int:
         if not self._connected:
-            raise RuntimeError("connect to MCP servers before registering their tools")
+            self._pending_registrations.append((registry, deny))
+            return 0
         count = 0
         for name, item in self._tools.items():
             if deny is not None and deny(name):

@@ -302,6 +302,14 @@ def check_url_syntax(url: str) -> str:
     parsed = urlparse(cleaned)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise BrowserPolicyError("URL must use http or https")
+    if parsed.username or parsed.password or "@" in (parsed.netloc or ""):
+        raise BrowserPolicyError("URLs with embedded credentials are not allowed")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise BrowserPolicyError("URL port is out of the valid range 1-65535") from exc
+    if port is not None and not 1 <= port <= 65535:
+        raise BrowserPolicyError("URL port is out of the valid range 1-65535")
     return cleaned
 
 
