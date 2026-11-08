@@ -1,0 +1,7 @@
+{
+  "artifact_roundtrip_8kb_ms": 0.33276399972237414,
+  "dispatch_ready_10tasks_ms": 7.394307000140543,
+  "plan_dag_16tasks_ms": 0.5157420000614366,
+  "promote_ready_25tasks_ms": 0.451543000053789,
+  "review_cycle_with_revision_ms": 0.3711019999173004
+}

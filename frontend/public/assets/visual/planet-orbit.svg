@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 480" fill="none">
+  <defs>
+    <radialGradient id="planet" cx="34%" cy="25%" r="78%">
+      <stop offset="0" stop-color="#F8D9B6"/>
+      <stop offset=".42" stop-color="#D99A65"/>
+      <stop offset=".78" stop-color="#A95D2D"/>
+      <stop offset="1" stop-color="#713B20"/>
+    </radialGradient>
+    <linearGradient id="ring" x1="42" y1="210" x2="590" y2="350">
+      <stop stop-color="#E9B88D" stop-opacity=".15"/>
+      <stop offset=".48" stop-color="#995329" stop-opacity=".9"/>
+      <stop offset="1" stop-color="#F3C9A5" stop-opacity=".22"/>
+    </linearGradient>
+    <filter id="shadow" x="100" y="70" width="450" height="390" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="18"/>
+    </filter>
+    <clipPath id="disc"><circle cx="326" cy="222" r="124"/></clipPath>
+  </defs>
+  <ellipse cx="328" cy="370" rx="178" ry="30" fill="#8A4A27" opacity=".16" filter="url(#shadow)"/>
+  <ellipse cx="326" cy="222" rx="124" ry="124" fill="url(#planet)"/>
+  <g clip-path="url(#disc)" opacity=".24" stroke="#713B20" stroke-width="2">
+    <path d="M180 170c70 35 186 38 293-3M176 210c80 28 193 31 299-7M190 260c74 18 177 20 268-10M220 310c65 7 132 3 208-20"/>
+    <path d="M245 95c-40 70-44 182 8 260M315 92c-20 85-16 178 16 260M390 115c-5 73 12 142 48 205"/>
+  </g>
+  <ellipse cx="326" cy="222" rx="278" ry="84" transform="rotate(-17 326 222)" stroke="url(#ring)" stroke-width="14"/>
+  <path d="M63 304c74-89 164-134 263-134 100 0 181 31 249 93" stroke="#F7D8BC" stroke-width="2" opacity=".65"/>
+  <path d="M78 329c100-65 194-91 285-80 75 9 135 33 191 70" stroke="#995329" stroke-width="2" opacity=".5"/>
+  <circle cx="112" cy="151" r="4" fill="#C27A45"/>
+  <circle cx="535" cy="118" r="3" fill="#C27A45"/>
+  <path d="M505 64v22m-11-11h22M145 70v16m-8-8h16" stroke="#B9794D" stroke-width="2" stroke-linecap="round" opacity=".8"/>
+</svg>

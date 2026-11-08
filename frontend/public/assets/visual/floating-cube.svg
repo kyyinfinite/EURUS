@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 480" fill="none">
+  <defs>
+    <linearGradient id="top" x1="150" y1="90" x2="320" y2="230" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F9E5D2"/><stop offset="1" stop-color="#D99A65"/>
+    </linearGradient>
+    <linearGradient id="left" x1="110" y1="180" x2="240" y2="390" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D99A65"/><stop offset="1" stop-color="#995329"/>
+    </linearGradient>
+    <linearGradient id="right" x1="240" y1="180" x2="370" y2="380" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#B87545"/><stop offset="1" stop-color="#713B20"/>
+    </linearGradient>
+    <filter id="blur" x="45" y="330" width="390" height="110" filterUnits="userSpaceOnUse">
+      <feGaussianBlur stdDeviation="17"/>
+    </filter>
+  </defs>
+  <ellipse cx="240" cy="382" rx="138" ry="24" fill="#713B20" opacity=".2" filter="url(#blur)"/>
+  <g stroke="#F9E7D7" stroke-opacity=".72" stroke-width="2" stroke-linejoin="round">
+    <path d="m240 66 139 78-139 80-139-80 139-78Z" fill="url(#top)"/>
+    <path d="M101 144v157l139 80V224L101 144Z" fill="url(#left)"/>
+    <path d="M379 144v157l-139 80V224l139-80Z" fill="url(#right)"/>
+  </g>
+  <path d="m240 66 0 158m139-80-139 80-139-80" stroke="#FFF6ED" stroke-opacity=".8" stroke-width="2"/>
+  <path d="m146 145 94-54 94 54-94 54-94-54Z" stroke="#FFF6ED" stroke-opacity=".4"/>
+  <path d="m240 224 0 157" stroke="#F8DCC4" stroke-opacity=".42"/>
+  <circle cx="385" cy="89" r="5" fill="#C27A45"/>
+  <path d="M385 67v44m-22-22h44" stroke="#C27A45" stroke-width="2" opacity=".7"/>
+</svg>
