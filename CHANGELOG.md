@@ -4,6 +4,8 @@
 
 ### Workspace TUI
 
+- Explorer double-click now requires both clicks on the same row and uses an
+  injectable clock, which removes a timing-dependent test failure on slow CI runners.
 - `eurus tui` now opens a multi-panel workspace when the terminal is at least
   100 columns wide: file explorer, tabbed main workspace (chat, editor, diff,
   preview), agent activity feed, composer and a contextual footer. Narrow

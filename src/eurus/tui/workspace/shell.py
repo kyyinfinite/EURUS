@@ -48,7 +48,7 @@ from eurus.tui.workspace.editor import EditorSession
 from eurus.tui.workspace.explorer import FileExplorer
 from eurus.tui.workspace.fileindex import FileIndex, build_index
 from eurus.tui.workspace.geometry import PanelLayout, compute_layout
-from eurus.tui.workspace.mouse import DragState, drag_move_handler
+from eurus.tui.workspace.mouse import DoubleClickTracker, DragState, drag_move_handler
 from eurus.tui.workspace.preview import FilePreview
 from eurus.tui.workspace.store import WorkspaceStore
 from eurus.tui.workspace.syntax import TOKEN_STYLE_KEYS, highlight_line, lexer_for
@@ -142,13 +142,16 @@ class WorkspaceApp(SessionUI):
         self.activity = ActivityFeed(self.app_invalidate)
         self._file_index: FileIndex | None = None
         self._drag = DragState()
-        self._click_state: dict[str, float | None] = {"explorer": None}
+        self._explorer_clicks = DoubleClickTracker(lambda: self._click_clock())
         self.find_active = False
         self.replace_active = False
         self.find_buffer = Buffer(multiline=False)
         self.replace_buffer = Buffer(multiline=False)
         super().__init__(session, renderer, sink)
         self.buffer.completer = WorkspaceCompleter(COMMANDS, self._ensure_file_index)
+
+    def _click_clock(self) -> float:
+        return time.monotonic()
 
     def _ensure_file_index(self, force: bool = False) -> FileIndex:
         now = time.monotonic()
@@ -326,13 +329,9 @@ class WorkspaceApp(SessionUI):
     def _explorer_row_handler(self, index: int) -> Callable[[MouseEvent], None]:
         def handler(event: MouseEvent) -> None:
             if event.event_type == MouseEventType.MOUSE_UP:
-                now = time.monotonic()
-                last = self._click_state.get("explorer")
-                if last is not None and now - last < 0.4:
-                    self._click_state["explorer"] = None
+                if self._explorer_clicks.register(index):
                     self._explorer_open_click(index)
                 else:
-                    self._click_state["explorer"] = now
                     self._explorer_click(index)
             elif event.event_type == MouseEventType.SCROLL_UP:
                 self._scroll_panel("explorer", -3)

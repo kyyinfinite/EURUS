@@ -16,6 +16,32 @@ class DragState:
     active: bool = False
 
 
+class DoubleClickTracker:
+    def __init__(
+        self,
+        clock: Callable[[], float] = time.monotonic,
+        window: float = DOUBLE_CLICK_SECONDS,
+    ) -> None:
+        self._clock = clock
+        self._window = window
+        self._last_key: object = None
+        self._last_at: float | None = None
+
+    def register(self, key: object) -> bool:
+        now = self._clock()
+        last_at = self._last_at
+        if last_at is not None and key == self._last_key and now - last_at < self._window:
+            self.reset()
+            return True
+        self._last_key = key
+        self._last_at = now
+        return False
+
+    def reset(self) -> None:
+        self._last_key = None
+        self._last_at = None
+
+
 def click_handler(action: Callable[[], None]) -> Callable[[MouseEvent], None]:
     def handler(event: MouseEvent) -> None:
         if event.event_type == MouseEventType.MOUSE_UP:

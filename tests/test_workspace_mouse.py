@@ -99,6 +99,8 @@ def test_mouse_click_opens_file_on_double_click(tmp_path, monkeypatch):
         await asyncio.sleep(0.4)
         pipe.send_text("\x1b")
         await asyncio.sleep(1.2)
+        ticks = iter(range(1000))
+        monkeypatch.setattr(ui, "_click_clock", lambda: next(ticks) * 0.05)
         first = ui._explorer_row_handler(index)
         from prompt_toolkit.layout.screen import Point
         from prompt_toolkit.mouse_events import MouseButton, MouseEventType
@@ -110,9 +112,8 @@ def test_mouse_click_opens_file_on_double_click(tmp_path, monkeypatch):
             modifiers = frozenset()
 
         first(FakeEvent())
-        await asyncio.sleep(0.1)
+        assert ui.tabs.active.kind == "chat"
         first(FakeEvent())
-        await asyncio.sleep(0.3)
         assert ui.tabs.active.kind == "editor"
         assert ui.tabs.active.path == "target.py"
         ui.app.exit()
@@ -219,3 +220,19 @@ def test_terminal_state_restored_after_exit(tmp_path, monkeypatch):
     frame = buffer.getvalue()
     assert "\x1b[?1000h" in frame or "\x1b[?1006h" in frame
     assert "\x1b[?1000l" in frame or "\x1b[?1006l" in frame
+
+
+def test_double_click_tracker_requires_same_target_within_window():
+    from eurus.tui.workspace.mouse import DoubleClickTracker
+
+    now = [0.0]
+    tracker = DoubleClickTracker(lambda: now[0], window=0.4)
+    assert tracker.register(1) is False
+    now[0] = 0.1
+    assert tracker.register(2) is False
+    now[0] = 0.2
+    assert tracker.register(2) is True
+    now[0] = 0.3
+    assert tracker.register(2) is False
+    now[0] = 0.9
+    assert tracker.register(2) is False
