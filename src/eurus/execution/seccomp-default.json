@@ -1,0 +1,79 @@
+{
+  "defaultAction": "SCMP_ACT_ERRNO",
+  "archMap": [
+    {
+      "architecture": "SCMP_ARCH_X86_64",
+      "subArchitectures": ["SCMP_ARCH_X86", "SCMP_ARCH_X32"]
+    },
+    {
+      "architecture": "SCMP_ARCH_AARCH64",
+      "subArchitectures": ["SCMP_ARCH_ARM"]
+    },
+    {
+      "architecture": "SCMP_ARCH_S390X",
+      "subArchitectures": ["SCMP_ARCH_S390"]
+    },
+    {
+      "architecture": "SCMP_ARCH_PPC64LE",
+      "subArchitectures": []
+    }
+  ],
+  "syscalls": [
+    {
+      "names": [
+        "accept", "accept4", "access", "alarm", "arch_prctl", "bind", "brk",
+        "capget", "capset", "chdir", "chmod", "chown", "clock_getres",
+        "clock_getres_time64", "clock_gettime", "clock_gettime64",
+        "clock_nanosleep", "clock_nanosleep_time64", "clone", "close",
+        "close_range", "connect", "copy_file_range", "creat", "dup", "dup2",
+        "dup3", "epoll_create", "epoll_create1", "epoll_ctl", "epoll_pwait",
+        "epoll_pwait2", "epoll_wait", "eventfd", "eventfd2", "execve",
+        "execveat", "exit", "exit_group", "faccessat", "faccessat2",
+        "fadvise64", "fadvise64_64", "fallocate", "fchdir", "fchmod",
+        "fchmodat", "fchown", "fchownat", "fcntl", "fcntl64", "fdatasync",
+        "fgetxattr", "flistxattr", "flock", "fork", "fstat", "fstat64",
+        "fstatat64", "fstatfs", "fstatfs64", "fsync", "ftruncate", "futex",
+        "futex_time64", "futimesat", "getcpu", "getcwd", "getdents",
+        "getdents64", "getegid", "getegid32", "geteuid", "geteuid32",
+        "getgid", "getgid32", "getgroups", "getgroups32", "gethostname",
+        "getitimer", "getpeername", "getpgid", "getpgrp", "getpid",
+        "getppid", "getpriority", "getrandom", "getresgid", "getresgid32",
+        "getresuid", "getresuid32", "getrlimit", "getrusage", "getsid",
+        "getsockname", "getsockopt", "gettid", "gettimeofday", "getuid",
+        "getuid32", "getxattr", "inotify_add_watch", "inotify_init",
+        "inotify_init1", "inotify_rm_watch", "ioctl", "kill", "link",
+        "linkat", "listen", "listxattr", "llistxattr", "llseek", "lseek",
+        "lgetxattr", "lstat", "lstat64", "madvise", "membarrier",
+        "memfd_create", "mmap", "mmap2", "mprotect", "mremap", "msync",
+        "munmap", "nanosleep", "newfstatat", "open", "openat", "openat2",
+        "pause", "pipe", "pipe2", "poll", "ppoll", "ppoll_time64", "prctl",
+        "pread64", "preadv", "preadv2", "prlimit64", "pselect6",
+        "pselect6_time64", "pwrite64", "pwritev", "pwritev2", "read",
+        "readahead", "readlink", "readlinkat", "readv", "recvfrom",
+        "recvmmsg", "recvmmsg_time64", "recvmsg", "rename", "renameat",
+        "renameat2", "restart_syscall", "rmdir", "rseq", "rt_sigaction",
+        "rt_sigpending", "rt_sigprocmask", "rt_sigqueueinfo", "rt_sigreturn",
+        "rt_sigsuspend", "rt_sigtimedwait", "sched_getaffinity",
+        "sched_getattr", "sched_getparam", "sched_get_priority_max",
+        "sched_get_priority_min", "sched_getscheduler",
+        "sched_rr_get_interval", "sched_rr_get_interval_time64", "sched_yield",
+        "seccomp", "sendfile", "sendfile64", "sendmmsg", "sendmsg", "sendto",
+        "set_robust_list", "set_tid_address", "setitimer", "setpgid",
+        "setpriority", "setrlimit", "setsockopt", "shutdown", "sigaltstack",
+        "socket", "socketpair", "stat", "stat64", "statfs", "statfs64",
+        "statx", "symlink", "symlinkat", "sync", "sync_file_range", "syncfs",
+        "sysinfo", "tgkill", "time", "timerfd_create", "timerfd_gettime",
+        "timerfd_gettime64", "timerfd_settime", "timerfd_settime64", "times",
+        "truncate", "truncate64", "umask", "uname", "unlink", "unlinkat",
+        "utimensat", "utimensat_time64", "vfork", "wait4", "waitid",
+        "write", "writev"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "names": ["clone3"],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 38
+    }
+  ]
+}
